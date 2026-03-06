@@ -155,12 +155,28 @@ function getToolHeaderParts(
       const trunc = url.length > 60 ? url.slice(0, 57) + "…" : url;
       return { label: displayName, detail: trunc };
     }
-    default:
+    default: {
+      if (name.startsWith("mcp__")) {
+        // mcp__grep__searchGitHub → show tool name + query arg
+        const toolFn = name.split("__")[2] ?? "";
+        const query = String(args.query ?? args.pattern ?? args.q ?? "");
+        const detail = query
+          ? `${toolFn}: ${query.length > 50 ? query.slice(0, 47) + "…" : query}`
+          : toolFn;
+        return { label: displayName, detail };
+      }
       return { label: displayName, detail: "" };
+    }
   }
 }
 
 function toolDisplayName(name: string): string {
+  if (name.startsWith("mcp__")) {
+    // mcp__grep__searchGitHub → "MCP:Grep"
+    const parts = name.split("__");
+    const server = parts[1] ?? "mcp";
+    return `MCP:${server.charAt(0).toUpperCase() + server.slice(1)}`;
+  }
   switch (name) {
     case "bash":
       return "Bash";
@@ -212,8 +228,13 @@ function getInlineSummary(name: string, result: string, isError: boolean): strin
       if (result.startsWith("Error")) return result.split("\n")[0];
       return `${lines.length} line${lines.length !== 1 ? "s" : ""}`;
     }
-    default:
+    default: {
+      if (name.startsWith("mcp__")) {
+        const lines = result.split("\n").filter((l) => l.length > 0);
+        return `${lines.length} line${lines.length !== 1 ? "s" : ""}`;
+      }
       return "";
+    }
   }
 }
 
@@ -421,8 +442,18 @@ function buildResultBody(
       }
       return null; // compact display with inline summary
     }
-    default:
+    default: {
+      if (name.startsWith("mcp__")) {
+        const lines = result.split("\n").filter((l) => l.length > 0);
+        if (lines.length === 0) return null;
+        const display = lines.slice(0, MAX_OUTPUT_LINES);
+        return {
+          lines: display.map((l, i) => <MCPResultLine key={i} line={l} />),
+          totalLines: lines.length,
+        };
+      }
       return null;
+    }
   }
 }
 
@@ -551,4 +582,33 @@ function LsLine({ line }: { line: string }) {
       <Text color="#6b7280"> {size}</Text>
     </Text>
   );
+}
+
+// ── MCP result line ─────────────────────────────────────
+
+function MCPResultLine({ line }: { line: string }) {
+  // Detect code search results: "repo/path — content" or "file:line:content"
+  const dashMatch = line.match(/^(.+?)\s+—\s+(.+)$/);
+  if (dashMatch) {
+    return (
+      <Text>
+        <Text color="#60a5fa">{dashMatch[1]}</Text>
+        <Text color="#6b7280"> — </Text>
+        <Text color="#9ca3af">{dashMatch[2]}</Text>
+      </Text>
+    );
+  }
+  const colonMatch = line.match(/^([^:]+):(\d+):(.+)$/);
+  if (colonMatch) {
+    return (
+      <Text>
+        <Text color="#60a5fa">{colonMatch[1]}</Text>
+        <Text color="#6b7280">:</Text>
+        <Text color="#fbbf24">{colonMatch[2]}</Text>
+        <Text color="#6b7280">:</Text>
+        <Text color="#9ca3af">{colonMatch[3]}</Text>
+      </Text>
+    );
+  }
+  return <Text color="#9ca3af">{line}</Text>;
 }

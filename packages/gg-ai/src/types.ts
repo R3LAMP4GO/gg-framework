@@ -92,6 +92,8 @@ export interface Tool {
   name: string;
   description: string;
   parameters: z.ZodType;
+  /** Raw JSON Schema — bypasses zodToJsonSchema when set (used by MCP tools) */
+  rawInputSchema?: Record<string, unknown>;
 }
 
 export type ToolChoice = "auto" | "none" | "required" | { name: string };

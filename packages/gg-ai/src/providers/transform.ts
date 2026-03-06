@@ -102,7 +102,8 @@ export function toAnthropicTools(tools: Tool[]): Anthropic.Tool[] {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    input_schema: zodToJsonSchema(tool.parameters) as Anthropic.Tool["input_schema"],
+    input_schema: (tool.rawInputSchema ??
+      zodToJsonSchema(tool.parameters)) as Anthropic.Tool["input_schema"],
   }));
 }
 
@@ -213,7 +214,7 @@ export function toOpenAITools(tools: Tool[]): OpenAI.ChatCompletionTool[] {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: zodToJsonSchema(tool.parameters),
+      parameters: tool.rawInputSchema ?? zodToJsonSchema(tool.parameters),
     },
   }));
 }

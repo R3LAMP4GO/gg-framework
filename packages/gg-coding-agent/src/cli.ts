@@ -14,10 +14,11 @@ import { formatUserError } from "./utils/error-handler.js";
 import type { Message, Provider, ThinkingLevel } from "@kenkaiiii/gg-ai";
 import { AuthStorage } from "./core/auth-storage.js";
 import { SessionManager } from "./core/session-manager.js";
-import { ensureAppDirs } from "./config.js";
+import { ensureAppDirs, getAppPaths } from "./config.js";
 import { initLogger, log, closeLogger } from "./core/logger.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { createTools } from "./tools/index.js";
+import { MCPClientManager, DEFAULT_MCP_SERVERS } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
 import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
@@ -114,16 +115,37 @@ function main(): void {
     process.exit(0);
   }
 
-  const provider = (values.provider ?? "anthropic") as "anthropic" | "openai" | "glm" | "moonshot";
-  const model =
-    values.model ??
-    (provider === "openai"
-      ? "gpt-5.3-codex"
-      : provider === "glm"
-        ? "glm-5"
-        : provider === "moonshot"
-          ? "kimi-k2.5"
-          : "claude-opus-4-6");
+  // Load saved settings for model/provider persistence
+  let savedProvider: "anthropic" | "openai" | "glm" | "moonshot" | undefined;
+  let savedModel: string | undefined;
+  try {
+    const raw = JSON.parse(fs.readFileSync(getAppPaths().settingsFile, "utf-8"));
+    if (raw.defaultProvider) savedProvider = raw.defaultProvider;
+    if (raw.defaultModel) savedModel = raw.defaultModel;
+  } catch {
+    // No settings file or invalid JSON — use defaults
+  }
+
+  // Priority: CLI flag > saved setting > hardcoded default
+  const providerFromFlag = values.provider as
+    | "anthropic"
+    | "openai"
+    | "glm"
+    | "moonshot"
+    | undefined;
+  const provider: "anthropic" | "openai" | "glm" | "moonshot" =
+    providerFromFlag ?? savedProvider ?? "anthropic";
+
+  function getHardcodedDefault(p: string): string {
+    if (p === "openai") return "gpt-5.3-codex";
+    if (p === "glm") return "glm-5";
+    if (p === "moonshot") return "kimi-k2.5";
+    return "claude-opus-4-6";
+  }
+
+  // Use saved model only if provider matches (or no provider flag was given)
+  const model: string =
+    values.model ?? (!providerFromFlag && savedModel ? savedModel : getHardcodedDefault(provider));
 
   const thinkingLevel = values.thinking as ThinkingLevel | undefined;
   const maxTurns = values["max-turns"] ? parseInt(values["max-turns"], 10) : undefined;
@@ -253,8 +275,24 @@ async function runInkTUI(opts: {
   const systemPrompt = opts.systemPrompt ?? (await buildSystemPrompt(cwd));
   const { tools, processManager } = createTools(cwd, { agents, provider, model });
 
+  // Connect MCP servers
+  const mcpManager = new MCPClientManager();
+  try {
+    const mcpTools = await mcpManager.connectAll(DEFAULT_MCP_SERVERS);
+    tools.push(...mcpTools);
+  } catch (err) {
+    log(
+      "WARN",
+      "mcp",
+      `MCP initialization failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // Kill all background processes on exit (synchronous — catches all exit paths)
-  process.on("exit", () => processManager.shutdownAll());
+  process.on("exit", () => {
+    processManager.shutdownAll();
+    mcpManager.dispose().catch(() => {});
+  });
 
   // Seed messages with system prompt
   const messages: Message[] = [{ role: "system" as const, content: systemPrompt }];
@@ -322,6 +360,7 @@ async function runInkTUI(opts: {
     sessionsDir: paths.sessionsDir,
     sessionPath,
     processManager,
+    settingsFile: paths.settingsFile,
   });
 
   closeLogger();

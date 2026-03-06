@@ -17,6 +17,8 @@ import { discoverSkills, type Skill } from "./skills.js";
 import { ensureAppDirs } from "../config.js";
 import { buildSystemPrompt } from "../system-prompt.js";
 import { createTools, type ProcessManager } from "../tools/index.js";
+import { MCPClientManager, DEFAULT_MCP_SERVERS } from "./mcp/index.js";
+import { log } from "./logger.js";
 import crypto from "node:crypto";
 
 // ── Options ────────────────────────────────────────────────
@@ -60,6 +62,7 @@ export class AgentSession {
   private tools: AgentTool[] = [];
   private skills: Skill[] = [];
   private processManager?: ProcessManager;
+  private mcpManager?: MCPClientManager;
 
   private provider: Provider;
   private model: string;
@@ -113,6 +116,19 @@ export class AgentSession {
     const { tools, processManager } = createTools(this.cwd);
     this.tools = tools;
     this.processManager = processManager;
+
+    // Connect MCP servers (non-blocking — failures are logged and skipped)
+    this.mcpManager = new MCPClientManager();
+    try {
+      const mcpTools = await this.mcpManager.connectAll(DEFAULT_MCP_SERVERS);
+      this.tools.push(...mcpTools);
+    } catch (err) {
+      log(
+        "WARN",
+        "mcp",
+        `MCP initialization failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Load or create session
     if (this.opts.sessionId) {
@@ -283,6 +299,7 @@ export class AgentSession {
 
   async dispose(): Promise<void> {
     this.processManager?.shutdownAll();
+    await this.mcpManager?.dispose();
     await this.extensionLoader.deactivateAll();
   }
 
