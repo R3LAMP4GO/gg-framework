@@ -35,7 +35,7 @@ export interface RenderAppConfig {
 export async function renderApp(config: RenderAppConfig): Promise<void> {
   const theme = loadTheme(config.theme ?? "dark");
 
-  const { waitUntilExit } = render(
+  const { waitUntilExit, clear } = render(
     React.createElement(
       ThemeContext.Provider,
       { value: theme },
@@ -66,5 +66,14 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
     ),
   );
 
+  // Ink's built-in resize handler only clears the live area on terminal
+  // shrink, not grow. After any resize, terminal text reflow makes Ink's
+  // line-count-based erasing miss old content, leaving ghost duplicates.
+  // Clear the live area on every resize so Ink re-renders cleanly.
+  const onResize = () => clear();
+  process.stdout.on("resize", onResize);
+
   await waitUntilExit();
+
+  process.stdout.off("resize", onResize);
 }

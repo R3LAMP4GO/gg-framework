@@ -205,13 +205,15 @@ export function App(props: AppProps) {
   const [titleRunning, setTitleRunning] = useState(false);
   useTerminalTitle(titlePhase, titleRunning);
 
-  // Items scrolled into Static (history)
-  const [history, setHistory] = useState<CompletedItem[]>([]);
-  // Items from the current/last turn — rendered in the live area so they stay visible
-  const initialLiveItems: CompletedItem[] = props.initialHistory
+  // Items scrolled into Static (history) — banner and restored history go here
+  // immediately so they are rendered once and don't cause live-area redraws
+  // (which produce visual duplicates on terminal resize).
+  const initialHistory: CompletedItem[] = props.initialHistory
     ? [{ kind: "banner", id: "banner" }, ...props.initialHistory]
     : [{ kind: "banner", id: "banner" }];
-  const [liveItems, setLiveItems] = useState<CompletedItem[]>(initialLiveItems);
+  const [history, setHistory] = useState<CompletedItem[]>(initialHistory);
+  // Items from the current/last turn — rendered in the live area so they stay visible
+  const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
   const [overlay, setOverlay] = useState<"model" | null>(null);
   const [lastUserMessage, setLastUserMessage] = useState("");
   const [doneStatus, setDoneStatus] = useState<{

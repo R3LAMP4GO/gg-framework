@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { getModel } from "../../core/model-registry.js";
@@ -43,14 +43,10 @@ export function Banner({ version, model, cwd }: BannerProps) {
   const home = process.env.HOME ?? "";
   const displayPath = home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 
-  // Animated gradient shift
-  const [shift, setShift] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setShift((s) => (s + 1) % GRADIENT.length);
-    }, 150);
-    return () => clearInterval(timer);
-  }, []);
+  // Static gradient — no animation needed since the banner is rendered once
+  // into Ink's Static area. Animating here would waste CPU and could cause
+  // visual duplicates on terminal resize.
+  const shift = 0;
 
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
