@@ -45,7 +45,7 @@ Same philosophy applies to tools. People collect MCPs like Pokemon. Slack MCP, G
 
 This doesn't help. It confuses the agent. More tool descriptions = more noise = worse tool selection. The model spends tokens reasoning about tools it will never call.
 
-GG Coder ships with one MCP: [Grep](https://grep.app). That's it. It lets the agent search across 1M+ public GitHub repos to verify implementations against real-world code. Correct API usage, library idioms, production patterns. One tool that actually makes the output better.
+GG Coder ships with one MCP: [Grep](https://grep.dev). That's it. It lets the agent search across 1M+ public GitHub repos to verify implementations against real-world code. Correct API usage, library idioms, production patterns. One tool that actually makes the output better.
 
 You can still add your own MCPs if you need them. But start with less. You'll get better results.
 
