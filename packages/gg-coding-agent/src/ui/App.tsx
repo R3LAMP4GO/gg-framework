@@ -24,6 +24,7 @@ import { ActivityIndicator } from "./components/ActivityIndicator.js";
 import { InputArea } from "./components/InputArea.js";
 import { Footer } from "./components/Footer.js";
 import { Banner } from "./components/Banner.js";
+import { ShimmerLine } from "./components/ShimmerLine.js";
 import { ModelSelector } from "./components/ModelSelector.js";
 import { BackgroundTasksBar } from "./components/BackgroundTasksBar.js";
 import type { SlashCommandInfo } from "./components/SlashCommandMenu.js";
@@ -1062,8 +1063,12 @@ export function App(props: AppProps) {
         {(item) => renderItem(item)}
       </Static>
 
+      {/* Shimmer line — renders via raw ANSI to terminal row 1, bypassing Ink layout */}
+      <ShimmerLine active={agentLoop.isRunning} />
+
       {/* Content area — paddingRight prevents Yoga off-by-one blank lines
           when text wraps at the exact terminal edge */}
+
       <Box flexDirection="column" flexGrow={1} paddingRight={1}>
         {/* Live items — current/last turn, stays visible */}
         {liveItems.map((item) => renderItem(item))}

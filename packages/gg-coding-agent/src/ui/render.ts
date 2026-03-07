@@ -35,6 +35,18 @@ export interface RenderAppConfig {
 export async function renderApp(config: RenderAppConfig): Promise<void> {
   const theme = loadTheme(config.theme ?? "dark");
 
+  const rows = process.stdout.rows ?? 24;
+
+  // Clear screen and reserve row 1 for the shimmer line.
+  // Set a scroll margin (DECSTBM) so Ink's output stays in rows 2+
+  // while row 1 remains pinned — same technique tmux uses for its status bar.
+  process.stdout.write(
+    "\x1b[2J" + // clear screen
+      "\x1b[H" + // cursor to row 1, col 1
+      `\x1b[2;${rows}r` + // scroll region: row 2 to bottom
+      "\x1b[2;1H", // move cursor to row 2 for Ink
+  );
+
   const { waitUntilExit, clear } = render(
     React.createElement(
       ThemeContext.Provider,
@@ -83,11 +95,18 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
   // Ink's built-in resize handler only clears the live area on terminal
   // shrink, not grow. After any resize, terminal text reflow makes Ink's
   // line-count-based erasing miss old content, leaving ghost duplicates.
-  // Clear the live area on every resize so Ink re-renders cleanly.
-  const onResize = () => clear();
+  // Also update the scroll margin so the pinned row 1 survives resizes.
+  const onResize = () => {
+    const newRows = process.stdout.rows ?? 24;
+    process.stdout.write(`\x1b[2;${newRows}r`);
+    clear();
+  };
   process.stdout.on("resize", onResize);
 
   await waitUntilExit();
 
   process.stdout.off("resize", onResize);
+
+  // Reset scroll region and clear the shimmer line on exit
+  process.stdout.write("\x1b[r\x1b[1;1H\x1b[2K");
 }
