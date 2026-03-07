@@ -24,6 +24,7 @@ import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./core/oauth/types.js";
 import chalk from "chalk";
+import { checkAndAutoUpdate } from "./core/auto-update.js";
 
 const _require = createRequire(import.meta.url);
 const CLI_VERSION = (_require("../package.json") as { version: string }).version;
@@ -59,6 +60,12 @@ Authentication:
 `.trim();
 
 function main(): void {
+  // Silent auto-update check (throttled, non-blocking on failure)
+  const updateMessage = checkAndAutoUpdate(CLI_VERSION);
+  if (updateMessage) {
+    console.error(chalk.hex("#60a5fa")(updateMessage));
+  }
+
   // Handle subcommands before parseArgs
   const subcommand = process.argv[2];
 
