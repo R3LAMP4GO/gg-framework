@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { Markdown } from "./Markdown.js";
@@ -21,14 +21,42 @@ export function StreamingArea({
 }: StreamingAreaProps) {
   const theme = useTheme();
 
-  // Blinking cursor for streaming text
+  // Blinking cursor — only blink when text is NOT actively changing.
+  // While text streams, the reveal animation already provides visual feedback,
+  // so we show a static cursor and avoid the extra re-renders from blinking.
   const [cursorVisible, setCursorVisible] = useState(true);
+  const prevTextRef = useRef(streamingText);
+  const textChangingRef = useRef(false);
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track whether text is actively changing
+  useEffect(() => {
+    if (streamingText !== prevTextRef.current) {
+      prevTextRef.current = streamingText;
+      textChangingRef.current = true;
+      // Clear any existing stale timer
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+      // Mark text as "not changing" if no update for 600ms
+      staleTimerRef.current = setTimeout(() => {
+        textChangingRef.current = false;
+      }, 600);
+    }
+    return () => {
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+    };
+  }, [streamingText]);
+
   useEffect(() => {
     if (!isRunning) return;
     setCursorVisible(true);
     const timer = setInterval(() => {
-      setCursorVisible((v) => !v);
-    }, 530);
+      // Only blink when text has stopped changing (waiting for LLM)
+      if (!textChangingRef.current) {
+        setCursorVisible((v) => !v);
+      } else {
+        setCursorVisible(true);
+      }
+    }, 800);
     return () => clearInterval(timer);
   }, [isRunning]);
 

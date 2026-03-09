@@ -148,27 +148,41 @@ export function useAgentLoop(
     }
   }, []);
 
+  const emptyTicksRef = useRef(0);
+
   const startReveal = useCallback(() => {
     if (revealTimerRef.current) return;
+    emptyTicksRef.current = 0;
     revealTimerRef.current = setInterval(() => {
       const pending = textPendingRef.current;
-      if (pending.length === 0) return;
+      if (pending.length === 0) {
+        // Auto-stop after 3 empty ticks to avoid unnecessary re-renders
+        emptyTicksRef.current++;
+        if (emptyTicksRef.current >= 3) {
+          stopReveal();
+        }
+        return;
+      }
+      emptyTicksRef.current = 0;
 
       // Adaptive speed: reveal more chars when buffer is large.
       // Aggressive catch-up prevents text from lagging behind the LLM.
+      // Tick interval is 33ms (~30fps), so chars per tick are scaled up
+      // compared to the previous 10ms interval to maintain the same
+      // visual speed while triggering 3x fewer React re-renders.
       const buffered = pending.length;
       let charsPerTick: number;
-      if (buffered > 500) charsPerTick = 60;
-      else if (buffered > 200) charsPerTick = 30;
-      else if (buffered > 50) charsPerTick = 12;
-      else charsPerTick = 4;
+      if (buffered > 500) charsPerTick = 180;
+      else if (buffered > 200) charsPerTick = 90;
+      else if (buffered > 50) charsPerTick = 36;
+      else charsPerTick = 12;
 
       const reveal = pending.slice(0, charsPerTick);
       textPendingRef.current = pending.slice(charsPerTick);
       textVisibleRef.current += reveal;
       setStreamingText(textVisibleRef.current);
-    }, 10);
-  }, []);
+    }, 33);
+  }, [stopReveal]);
 
   const flushAllText = useCallback(() => {
     stopReveal();
@@ -225,7 +239,8 @@ export function useAgentLoop(
       setStreamedTokenEstimate(0);
       setIsRunning(true);
 
-      // Start elapsed timer (ticks every 250ms for smooth updates)
+      // Start elapsed timer (ticks every 1000ms — less frequent to reduce
+      // Ink re-renders which cause live-area flickering and viewport snapping)
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
       const timerStart = Date.now();
       elapsedTimerRef.current = setInterval(() => {
@@ -237,7 +252,7 @@ export function useAgentLoop(
         }
         // Update token estimate
         setStreamedTokenEstimate(realTokensAccumRef.current + Math.ceil(charCountRef.current / 4));
-      }, 250);
+      }, 1000);
 
       /** Freeze thinking time if currently in thinking phase */
       const freezeThinking = () => {

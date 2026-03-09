@@ -736,14 +736,26 @@ export function App(props: AppProps) {
     },
   );
 
-  // NOTE: We intentionally do NOT move liveItems to Static history when the
-  // agent finishes. Items stay in the live area and are flushed to Static
-  // when the next message is submitted (handleSubmit line ~884). Moving them
-  // on isRunning transition caused Ink cursor-math glitches — Ink
-  // miscalculates live-area height (doesn't account for wrapped lines), so
-  // the transition truncated or cut off the final response text. Keeping
-  // items in the live area is safe: no timers re-render it when the agent is
-  // idle (cursor blink and status-line pulse only run during agent runs).
+  // Flush liveItems to Static history after the agent finishes, with a short
+  // delay to avoid Ink cursor-math glitches. Ink miscalculates live-area
+  // height for wrapped lines, so flushing immediately on isRunning transition
+  // caused text truncation. The 300ms delay lets Ink finish rendering the
+  // final state before we move items to Static (where they're printed once
+  // and never re-rendered). This keeps the live area empty when idle, which
+  // prevents flickering and viewport snapping when the user scrolls.
+  useEffect(() => {
+    if (!agentLoop.isRunning && liveItems.length > 0) {
+      const timer = setTimeout(() => {
+        setLiveItems((prev) => {
+          if (prev.length > 0) {
+            setHistory((h) => pruneHistory([...h, ...prev]));
+          }
+          return [];
+        });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [agentLoop.isRunning, liveItems.length]);
 
   // Sync terminal title with agent loop state
   useEffect(() => {
@@ -757,7 +769,7 @@ export function App(props: AppProps) {
     if (agentLoop.activityPhase !== "thinking") return;
     const timer = setInterval(() => {
       setThinkingBorderFrame((f) => (f + 1) % THINKING_BORDER_COLORS.length);
-    }, 500);
+    }, 1000);
     return () => clearInterval(timer);
   }, [agentLoop.activityPhase]);
 
