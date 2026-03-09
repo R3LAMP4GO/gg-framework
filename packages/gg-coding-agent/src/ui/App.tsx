@@ -55,6 +55,12 @@ interface UserItem {
   id: string;
 }
 
+interface TaskItem {
+  kind: "task";
+  title: string;
+  id: string;
+}
+
 interface AssistantItem {
   kind: "assistant";
   text: string;
@@ -146,6 +152,7 @@ interface ServerToolDoneItem {
 
 export type CompletedItem =
   | UserItem
+  | TaskItem
   | AssistantItem
   | ToolStartItem
   | ToolDoneItem
@@ -727,16 +734,11 @@ export function App(props: AppProps) {
         // the live area.  Ink's cursor math can miscount wrapped lines and
         // clip the bottom of the content on subsequent live-area re-renders.
         // Moving items to Static writes them once — no further rewrites.
+        // Flush live items to Static but WITHOUT a DurationItem — the
+        // duration line is already shown via doneStatus in the live area.
         setLiveItems((prev) => {
           if (prev.length > 0) {
-            const duration: CompletedItem = {
-              kind: "duration",
-              durationMs,
-              toolsUsed,
-              verb: pickDurationVerb(toolsUsed),
-              id: getId(),
-            };
-            setHistory((h) => pruneHistory([...h, ...prev, duration]));
+            setHistory((h) => pruneHistory([...h, ...prev]));
           }
           return [];
         });
@@ -1049,6 +1051,18 @@ export function App(props: AppProps) {
         );
       case "user":
         return <UserMessage key={item.id} text={item.text} imageCount={item.imageCount} />;
+      case "task":
+        return (
+          <Box key={item.id} marginTop={1}>
+            <Text wrap="wrap">
+              <Text color={theme.success} bold>
+                {"▶ "}
+              </Text>
+              <Text color={theme.textDim}>{"Task: "}</Text>
+              <Text color={theme.success}>{item.title}</Text>
+            </Text>
+          </Box>
+        );
       case "assistant":
         return (
           <AssistantMessage
@@ -1149,7 +1163,7 @@ export function App(props: AppProps) {
             setStaticKey((k) => k + 1);
             setOverlay(null);
           }}
-          onWorkOnTask={(text) => {
+          onWorkOnTask={(title, prompt) => {
             setOverlay(null);
             setTaskCount(getTaskCount(props.cwd));
             // Reset to a fresh session before sending the task
@@ -1166,7 +1180,27 @@ export function App(props: AppProps) {
                 log("INFO", "tasks", "New session for task", { path: s.path });
               });
             }
-            handleSubmit(text, []);
+
+            // Show the short title in the TUI, but send the full prompt to the agent
+            const taskItem: TaskItem = { kind: "task", title, id: getId() };
+            setLastUserMessage(title);
+            setDoneStatus(null);
+            setLiveItems([taskItem]);
+            void (async () => {
+              try {
+                await agentLoop.run(prompt);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                log("ERROR", "error", msg);
+                const isAbort = msg.includes("aborted") || msg.includes("abort");
+                setLiveItems((prev) => [
+                  ...prev,
+                  isAbort
+                    ? { kind: "info", text: "Request was stopped.", id: getId() }
+                    : { kind: "error", message: msg, id: getId() },
+                ]);
+              }
+            })();
           }}
         />
       ) : (

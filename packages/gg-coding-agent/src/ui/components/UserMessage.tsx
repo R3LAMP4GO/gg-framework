@@ -6,19 +6,19 @@ export function UserMessage({ text, imageCount }: { text: string; imageCount?: n
   const theme = useTheme();
 
   return (
-    <Box marginTop={1} flexWrap="wrap">
-      <Text color={theme.inputPrompt}>{"❯ "}</Text>
-      <Box flexShrink={1}>
+    <Box marginTop={1} flexDirection="column">
+      <Text wrap="wrap">
+        <Text color={theme.inputPrompt}>{"❯ "}</Text>
         <Text color={theme.textMuted}>{text}</Text>
-      </Box>
-      {imageCount != null &&
-        imageCount > 0 &&
-        Array.from({ length: imageCount }, (_, i) => (
-          <Text key={i} color={theme.accent}>
-            {" "}
-            [Image #{i + 1}]
-          </Text>
-        ))}
+        {imageCount != null &&
+          imageCount > 0 &&
+          Array.from({ length: imageCount }, (_, i) => (
+            <Text key={i} color={theme.accent}>
+              {" "}
+              [Image #{i + 1}]
+            </Text>
+          ))}
+      </Text>
     </Box>
   );
 }

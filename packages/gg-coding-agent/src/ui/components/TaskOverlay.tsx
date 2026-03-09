@@ -11,7 +11,10 @@ import { basename, join } from "node:path";
 
 interface Task {
   id: string;
-  text: string;
+  title: string;
+  prompt: string;
+  /** @deprecated Old field — migrated to title+prompt on load */
+  text?: string;
   details?: string;
   status: "pending" | "in-progress" | "done";
   createdAt: string;
@@ -28,7 +31,14 @@ function hashPath(cwd: string): string {
 async function loadTasks(cwd: string): Promise<Task[]> {
   try {
     const data = await readFile(join(TASKS_BASE, hashPath(cwd), "tasks.json"), "utf-8");
-    return JSON.parse(data) as Task[];
+    const raw = JSON.parse(data) as Task[];
+    // Migrate old tasks that only have `text` (no title/prompt split)
+    return raw.map((t) => {
+      if (!t.prompt && t.text) {
+        return { ...t, title: t.text, prompt: t.text, text: undefined };
+      }
+      return t;
+    });
   } catch {
     return [];
   }
@@ -91,7 +101,7 @@ function TaskGradientText({ text }: { text: string }) {
 interface TaskOverlayProps {
   cwd: string;
   onClose: () => void;
-  onWorkOnTask: (text: string) => void;
+  onWorkOnTask: (title: string, prompt: string) => void;
   agentRunning?: boolean;
 }
 
@@ -168,14 +178,17 @@ export function TaskOverlay({ cwd, onClose, onWorkOnTask, agentRunning }: TaskOv
           if (mode === "adding") {
             const newTask: Task = {
               id: randomUUID(),
-              text,
+              title: text,
+              prompt: text,
               status: "pending",
               createdAt: new Date().toISOString(),
             };
             setTasks((prev) => [...prev, newTask]);
             setSelectedIndex(tasks.length);
           } else {
-            setTasks((prev) => prev.map((t, i) => (i === selectedIndex ? { ...t, text } : t)));
+            setTasks((prev) =>
+              prev.map((t, i) => (i === selectedIndex ? { ...t, title: text } : t)),
+            );
           }
         }
         setMode("normal");
@@ -220,7 +233,7 @@ export function TaskOverlay({ cwd, onClose, onWorkOnTask, agentRunning }: TaskOv
       const task = tasks[selectedIndex];
       if (task) {
         setMode("editing");
-        setInputText(task.text);
+        setInputText(task.title);
       }
       return;
     }
@@ -252,7 +265,7 @@ export function TaskOverlay({ cwd, onClose, onWorkOnTask, agentRunning }: TaskOv
         setTasks((prev) =>
           prev.map((t, i) => (i === selectedIndex ? { ...t, status: "in-progress" } : t)),
         );
-        onWorkOnTask(task.text);
+        onWorkOnTask(task.title, task.prompt);
       }
       return;
     }
@@ -316,7 +329,7 @@ export function TaskOverlay({ cwd, onClose, onWorkOnTask, agentRunning }: TaskOv
               : theme.text;
         return (
           <Text key={task.id} color={color} bold={selected}>
-            {prefix}[{check}] {task.text}
+            {prefix}[{check}] {task.title}
           </Text>
         );
       })}

@@ -10,7 +10,10 @@ const TASKS_BASE = join(homedir(), ".gg-tasks", "projects");
 
 interface Task {
   id: string;
-  text: string;
+  title: string;
+  prompt: string;
+  /** @deprecated Old field — migrated to title+prompt on load */
+  text?: string;
   details?: string;
   status: "pending" | "in-progress" | "done";
   createdAt: string;
@@ -27,7 +30,14 @@ function projectDir(cwd: string): string {
 async function loadTasks(cwd: string): Promise<Task[]> {
   try {
     const data = await readFile(join(projectDir(cwd), "tasks.json"), "utf-8");
-    return JSON.parse(data) as Task[];
+    const raw = JSON.parse(data) as Task[];
+    // Migrate old tasks that only have `text` (no title/prompt split)
+    return raw.map((t) => {
+      if (!t.prompt && t.text) {
+        return { ...t, title: t.text, prompt: t.text, text: undefined };
+      }
+      return t;
+    });
   } catch {
     return [];
   }
@@ -46,7 +56,17 @@ const TasksParams = z.object({
   action: z
     .enum(["add", "list", "done", "remove"])
     .describe("Action: add a task, list tasks, mark done, or remove"),
-  text: z.string().optional().describe("Task description (required for add)"),
+  title: z
+    .string()
+    .optional()
+    .describe("Short task title for display (max ~10 words, required for add)"),
+  prompt: z
+    .string()
+    .optional()
+    .describe(
+      "The standalone prompt sent to an agent with no context (required for add). " +
+        "Concise, actionable instruction with file paths and what to change.",
+    ),
   id: z.string().optional().describe("Task ID (required for done/remove — use list to find IDs)"),
 });
 
@@ -67,26 +87,31 @@ export function createTasksTool(cwd: string): AgentTool<typeof TasksParams> {
   return {
     name: "tasks",
     description:
-      "Manage the project task list. Add tasks you discover while working, " +
-      "list existing tasks, or mark tasks as done. Tasks appear in the " +
-      "task pane (Shift+`) for the user to review and act on.",
+      "Manage the project task list. Each task has a short title (shown in " +
+      "the task pane) and a prompt (sent as a standalone instruction to an " +
+      "agent with no context). Write prompts as concise, actionable directives " +
+      "with specific file paths — the agent must complete it from the prompt alone. " +
+      "When adding multiple tasks, order them by dependency — foundational work " +
+      "first, then core logic, integration, UI, and tests.",
     parameters: TasksParams,
-    execute({ action, text, id }) {
+    execute({ action, title, prompt, id }) {
       return enqueue(async () => {
         switch (action) {
           case "add": {
-            if (!text) return "Error: text is required for add action.";
+            if (!title) return "Error: title is required for add action.";
+            if (!prompt) return "Error: prompt is required for add action.";
             const tasks = await loadTasks(cwd);
             const newTask: Task = {
               id: randomUUID(),
-              text,
+              title,
+              prompt,
               status: "pending",
               createdAt: new Date().toISOString(),
             };
             tasks.push(newTask);
             await saveTasks(cwd, tasks);
-            log("INFO", "tasks", `Task added: ${text}`, { id: newTask.id });
-            return `Task added: "${text}" (id: ${newTask.id.slice(0, 8)})`;
+            log("INFO", "tasks", `Task added: ${title}`, { id: newTask.id });
+            return `Task added: "${title}" (id: ${newTask.id.slice(0, 8)})`;
           }
 
           case "list": {
@@ -94,7 +119,7 @@ export function createTasksTool(cwd: string): AgentTool<typeof TasksParams> {
             if (tasks.length === 0) return "No tasks.";
             const lines = tasks.map((t) => {
               const check = t.status === "done" ? "✓" : t.status === "in-progress" ? "~" : " ";
-              return `[${check}] ${t.text}  (id: ${t.id.slice(0, 8)}, ${t.status})`;
+              return `[${check}] ${t.title}  (id: ${t.id.slice(0, 8)}, ${t.status})`;
             });
             log("INFO", "tasks", `Listed ${tasks.length} tasks`);
             return lines.join("\n");
@@ -107,8 +132,8 @@ export function createTasksTool(cwd: string): AgentTool<typeof TasksParams> {
             if (!task) return `Error: no task found matching id "${id}".`;
             task.status = "done";
             await saveTasks(cwd, tasks);
-            log("INFO", "tasks", `Task done: ${task.text}`, { id: task.id });
-            return `Marked done: "${task.text}"`;
+            log("INFO", "tasks", `Task done: ${task.title}`, { id: task.id });
+            return `Marked done: "${task.title}"`;
           }
 
           case "remove": {
@@ -118,8 +143,8 @@ export function createTasksTool(cwd: string): AgentTool<typeof TasksParams> {
             if (idx === -1) return `Error: no task found matching id "${id}".`;
             const removed = tasks.splice(idx, 1)[0];
             await saveTasks(cwd, tasks);
-            log("INFO", "tasks", `Task removed: ${removed.text}`, { id: removed.id });
-            return `Removed: "${removed.text}"`;
+            log("INFO", "tasks", `Task removed: ${removed.title}`, { id: removed.id });
+            return `Removed: "${removed.title}"`;
           }
         }
       });

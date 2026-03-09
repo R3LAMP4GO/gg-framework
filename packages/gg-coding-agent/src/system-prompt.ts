@@ -63,7 +63,10 @@ export async function buildSystemPrompt(cwd: string, skills?: Skill[]): Promise<
       `- **task_output**: Read output from a background process by ID. Returns new output since last read (incremental). Use \`from_start=true\` to read from the beginning.\n` +
       `- **task_stop**: Stop a background process by ID. Sends SIGTERM, then SIGKILL after 5 seconds.\n` +
       `- **subagent**: Delegate focused, isolated subtasks (research, parallel exploration, independent fixes).\n` +
-      `- **tasks**: Manage the project task pane (visible to the user via Shift+\`). Use this to track work items you discover — TODOs, bugs, follow-ups, or improvements. Actions: \`add\` (text required), \`list\`, \`done\` (id required), \`remove\` (id required). Proactively add tasks when you notice issues or improvements while working, so the user can review and prioritize them later.\n` +
+      `- **tasks**: Manage the project task pane (Shift+\`). Actions: \`add\` (title + prompt required), \`list\`, \`done\` (id required), \`remove\` (id required). Proactively add tasks when you notice issues while working.\n` +
+      `  - **title**: Short label (~10 words max) shown in the task pane.\n` +
+      `  - **prompt**: Standalone instruction sent to an agent with NO prior context. Concise, actionable directive with specific file paths and what to change. The agent must complete it from the prompt alone. Keep it focused (1-3 sentences). If the task requires latest docs or APIs, tell the agent to research/fetch them.\n` +
+      `  - **Ordering**: When creating multiple tasks (e.g. from a PRD or spec), add them in correct dependency order — foundational work first (types, schemas, config), then core logic, then integration, then UI, then tests. Each task should be completable independently given that prior tasks are done. Think like an engineer planning a project: what must exist before the next piece can be built?\n` +
       `- **mcp__grep__searchGitHub**: Search real-world code across 1M+ public GitHub repos. Use to verify your implementation against production patterns — check correct API usage, library idioms, and common conventions before finalizing changes. Search for literal code patterns (e.g. \`StreamableHTTPClientTransport(\`, \`useEffect(() =>\`), not keywords.`,
   );
 
