@@ -39,6 +39,8 @@
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
     "react": "^19.2.4",
+    "string-width": "^8.2.0",
+    "wrap-ansi": "^10.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

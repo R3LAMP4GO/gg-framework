@@ -1,19 +1,40 @@
-import React from "react";
-import { Text, Box, useStdout } from "ink";
+import React, { useRef, useState, useLayoutEffect } from "react";
+import { Text, Box, useStdout, measureElement, type DOMElement } from "ink";
 import { marked, type Token, type Tokens } from "marked";
 import { useTheme, type Theme } from "../theme/theme.js";
 import { highlightCode } from "../utils/highlight.js";
+import {
+  centerToWidth,
+  fitToWidth,
+  plainTextLength,
+  wrapPlainTextLines,
+} from "../utils/table-text.js";
 
 /**
  * Render a markdown string as Ink components.
+ * Measures its own available width via Ink's layout engine so tables
+ * always fit regardless of parent padding, prefixes, or sidebars.
  */
 export function Markdown({ children }: { children: string }) {
   const theme = useTheme();
   const { stdout } = useStdout();
-  const columns = stdout?.columns ?? 80;
+  const ref = useRef<DOMElement>(null);
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      const { width } = measureElement(ref.current);
+      if (width > 0 && width !== measuredWidth) {
+        setMeasuredWidth(width);
+      }
+    }
+  });
+
+  // Use measured width if available, otherwise fall back to stdout
+  const columns = measuredWidth > 0 ? measuredWidth : (stdout?.columns ?? 80);
   const tokens = marked.lexer(children);
   return (
-    <Box flexDirection="column" flexShrink={1}>
+    <Box ref={ref} flexDirection="column" flexShrink={1}>
       {renderTokens(tokens, theme, columns)}
     </Box>
   );
@@ -165,60 +186,92 @@ function renderToken(token: Token, theme: Theme, key: number, columns: number): 
             }
           }
           if (!changed) {
-            // Distribute remaining evenly among unlocked columns
+            // Distribute remaining evenly among unlocked columns, then
+            // spread the Math.floor remainder across the first few columns
             const unlockedIdxs = colWidths.map((_, i) => i).filter((i) => !locked.has(i));
             const each = Math.floor(remaining / unlockedIdxs.length);
+            let leftover = remaining - each * unlockedIdxs.length;
             for (const i of unlockedIdxs) {
-              colWidths[i] = Math.max(3, each);
+              colWidths[i] = each + (leftover > 0 ? 1 : 0);
+              if (leftover > 0) leftover--;
             }
             break;
           }
         }
+
+        // Clamp: ensure total never exceeds available (guards against edge cases)
+        const totalAllocated = colWidths.reduce((a, b) => a + b, 0);
+        if (totalAllocated > availableForContent) {
+          const excess = totalAllocated - availableForContent;
+          // Trim from the widest column first
+          const sorted = colWidths.map((w, i) => ({ w, i })).sort((a, b) => b.w - a.w);
+          let toTrim = excess;
+          for (const entry of sorted) {
+            if (toTrim <= 0) break;
+            const trim = Math.min(toTrim, entry.w - 1);
+            colWidths[entry.i] -= trim;
+            toTrim -= trim;
+          }
+        }
       }
 
-      const borderColor = theme.border;
+      const borderColor = "white";
       const hLine = (left: string, mid: string, right: string) =>
-        left + colWidths.map((w) => "─".repeat(w + 2)).join(mid) + right;
+        left + colWidths.map((w) => "━".repeat(w + 2)).join(mid) + right;
+
+      // Pre-wrap all cells into plain strings (each exactly colWidths[ci] chars)
+      const headerWrapped = table.header.map((cell, ci) =>
+        wrapCellCentered(cell.tokens, colWidths[ci]),
+      );
+      const headerLineCount = Math.max(1, ...headerWrapped.map((lines) => lines.length));
+
+      const bodyWrapped = table.rows.map((row) =>
+        row.map((cell, ci) => wrapCellPadRight(cell.tokens, colWidths[ci])),
+      );
+      const bodyLineCounts = bodyWrapped.map((row) =>
+        Math.max(1, ...row.map((lines) => lines.length)),
+      );
+
+      /** Build a single string for one visual line of a row */
+      const buildRowLine = (wrappedCells: string[][], lineIdx: number) => {
+        let row = "";
+        for (let ci = 0; ci < wrappedCells.length; ci++) {
+          // fitToWidth guarantees exactly colWidths[ci] visual columns
+          const cell = wrappedCells[ci][lineIdx] ?? fitToWidth("", colWidths[ci]);
+          row += "┃ " + cell + " ";
+        }
+        row += "┃";
+        return row;
+      };
 
       return (
         <Box key={key} flexDirection="column" marginTop={gap}>
           {/* Top border */}
-          <Text color={borderColor}>{hLine("┌", "┬", "┐")}</Text>
-          {/* Header cells */}
-          <Box>
-            {table.header.map((cell, ci) => (
-              <React.Fragment key={ci}>
-                <Text color={borderColor}>{"│"}</Text>
-                <Text bold color={theme.primary}>
-                  {" "}
-                  {renderInlineCentered(cell.tokens, colWidths[ci], theme)}{" "}
-                </Text>
-              </React.Fragment>
-            ))}
-            <Text color={borderColor}>{"│"}</Text>
-          </Box>
+          <Text color={borderColor}>{hLine("┏", "┳", "┓")}</Text>
+          {/* Header lines */}
+          {Array.from({ length: headerLineCount }, (_, li) => (
+            <Text key={`hdr-L${li}`} color={borderColor} bold>
+              {buildRowLine(headerWrapped, li)}
+            </Text>
+          ))}
           {/* Header/body separator */}
-          <Text color={borderColor}>{hLine("├", "┼", "┤")}</Text>
+          <Text color={borderColor}>{hLine("┣", "╋", "┫")}</Text>
           {/* Body rows */}
-          {table.rows.map((row, ri) => (
+          {bodyWrapped.map((wrappedRow, ri) => (
             <React.Fragment key={ri}>
-              <Box>
-                {row.map((cell, ci) => (
-                  <React.Fragment key={ci}>
-                    <Text color={borderColor}>{"│"}</Text>
-                    <Text> {renderInlinePadRight(cell.tokens, colWidths[ci], theme)} </Text>
-                  </React.Fragment>
-                ))}
-                <Text color={borderColor}>{"│"}</Text>
-              </Box>
+              {Array.from({ length: bodyLineCounts[ri] }, (_, li) => (
+                <Text key={`r${ri}-L${li}`} color={borderColor}>
+                  {buildRowLine(wrappedRow, li)}
+                </Text>
+              ))}
               {/* Row separator (between rows, not after last) */}
               {ri < table.rows.length - 1 && (
-                <Text color={borderColor}>{hLine("├", "┼", "┤")}</Text>
+                <Text color={borderColor}>{hLine("┣", "╋", "┫")}</Text>
               )}
             </React.Fragment>
           ))}
           {/* Bottom border */}
-          <Text color={borderColor}>{hLine("└", "┴", "┘")}</Text>
+          <Text color={borderColor}>{hLine("┗", "┻", "┛")}</Text>
         </Box>
       );
     }
@@ -247,71 +300,16 @@ function renderToken(token: Token, theme: Theme, key: number, columns: number): 
 
 // ── Table helpers ──────────────────────────────────────────
 
-function plainTextLength(tokens: Token[]): number {
-  let len = 0;
-  for (const t of tokens) {
-    const tok = t as Token & { tokens?: Token[]; text?: string };
-    if (tok.tokens && Array.isArray(tok.tokens)) {
-      len += plainTextLength(tok.tokens);
-    } else if (typeof tok.text === "string") {
-      len += tok.text.length;
-    } else if ("raw" in t && typeof t.raw === "string") {
-      len += t.raw.length;
-    }
-  }
-  return len;
+/** Wrap cell content into padded strings, each exactly `width` visual columns. */
+function wrapCellPadRight(tokens: Token[], width: number): string[] {
+  const lines = wrapPlainTextLines(tokens, width);
+  return lines.map((line) => fitToWidth(line, width));
 }
 
-function truncatePlainText(tokens: Token[], maxLen: number): string {
-  let text = "";
-  for (const t of tokens) {
-    const tok = t as Token & { tokens?: Token[]; text?: string };
-    if (tok.tokens && Array.isArray(tok.tokens)) {
-      text += truncatePlainText(tok.tokens, maxLen - text.length);
-    } else if (typeof tok.text === "string") {
-      text += tok.text;
-    } else if ("raw" in t && typeof t.raw === "string") {
-      text += t.raw;
-    }
-    if (text.length >= maxLen) break;
-  }
-  return text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text;
-}
-
-function renderInlinePadRight(tokens: Token[], width: number, theme: Theme): React.ReactNode[] {
-  const textLen = plainTextLength(tokens);
-  if (textLen > width) {
-    const truncated = truncatePlainText(tokens, width);
-    return [
-      <React.Fragment key="trunc">
-        <Text color={theme.text}>{truncated}</Text>
-      </React.Fragment>,
-    ];
-  }
-  const content = renderInline(tokens, theme);
-  const pad = Math.max(0, width - textLen);
-  return [...content, <React.Fragment key="rpad">{" ".repeat(pad)}</React.Fragment>];
-}
-
-function renderInlineCentered(tokens: Token[], width: number, theme: Theme): React.ReactNode[] {
-  const textLen = plainTextLength(tokens);
-  if (textLen > width) {
-    const truncated = truncatePlainText(tokens, width);
-    return [
-      <React.Fragment key="trunc">
-        <Text bold>{truncated}</Text>
-      </React.Fragment>,
-    ];
-  }
-  const content = renderInline(tokens, theme);
-  const total = Math.max(0, width - textLen);
-  const left = Math.floor(total / 2);
-  const right = total - left;
-  return [
-    <React.Fragment key="lpad">{" ".repeat(left)}</React.Fragment>,
-    ...content,
-    <React.Fragment key="rpad">{" ".repeat(right)}</React.Fragment>,
-  ];
+/** Wrap header cell content into centered strings, each exactly `width` visual columns. */
+function wrapCellCentered(tokens: Token[], width: number): string[] {
+  const lines = wrapPlainTextLines(tokens, width);
+  return lines.map((line) => centerToWidth(line, width));
 }
 
 // ── Inline rendering ───────────────────────────────────────
