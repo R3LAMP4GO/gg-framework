@@ -11,6 +11,7 @@ import { extractImagePaths, type ImageAttachment } from "../utils/image.js";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { useAgentLoop, type ActivityPhase } from "./hooks/useAgentLoop.js";
 import { UserMessage } from "./components/UserMessage.js";
+import type { PasteInfo } from "./components/InputArea.js";
 import { AssistantMessage } from "./components/AssistantMessage.js";
 import { ToolExecution } from "./components/ToolExecution.js";
 import { ServerToolExecution } from "./components/ServerToolExecution.js";
@@ -78,6 +79,7 @@ interface UserItem {
   kind: "user";
   text: string;
   imageCount?: number;
+  pasteInfo?: PasteInfo;
   id: string;
 }
 
@@ -164,6 +166,7 @@ interface ServerToolStartItem {
   serverToolCallId: string;
   name: string;
   input: unknown;
+  startedAt: number;
   id: string;
 }
 
@@ -173,6 +176,7 @@ interface ServerToolDoneItem {
   input: unknown;
   resultType: string;
   data: unknown;
+  durationMs: number;
   id: string;
 }
 
@@ -766,7 +770,14 @@ export function App(props: AppProps) {
         log("INFO", "server_tool", `Server tool call: ${name}`, { id });
         setLiveItems((prev) => [
           ...prev,
-          { kind: "server_tool_start", serverToolCallId: id, name, input, id: getId() },
+          {
+            kind: "server_tool_start",
+            serverToolCallId: id,
+            name,
+            input,
+            startedAt: Date.now(),
+            id: getId(),
+          },
         ]);
       }, []),
       onServerToolResult: useCallback((toolUseId: string, resultType: string, data: unknown) => {
@@ -783,6 +794,7 @@ export function App(props: AppProps) {
               input: startItem.input,
               resultType,
               data,
+              durationMs: Date.now() - startItem.startedAt,
               id: startItem.id,
             };
             const next = [...prev];
@@ -791,7 +803,15 @@ export function App(props: AppProps) {
           }
           return [
             ...prev,
-            { kind: "server_tool_done", name: "unknown", input: {}, resultType, data, id: getId() },
+            {
+              kind: "server_tool_done",
+              name: "unknown",
+              input: {},
+              resultType,
+              data,
+              durationMs: 0,
+              id: getId(),
+            },
           ];
         });
       }, []),
@@ -916,7 +936,7 @@ export function App(props: AppProps) {
   }, [doneStatus]);
 
   const handleSubmit = useCallback(
-    async (input: string, inputImages: ImageAttachment[] = []) => {
+    async (input: string, inputImages: ImageAttachment[] = [], pasteInfo?: PasteInfo) => {
       const trimmed = input.trim();
 
       if (trimmed.startsWith("/")) {
@@ -1045,6 +1065,7 @@ export function App(props: AppProps) {
         kind: "user",
         text: displayText,
         imageCount: hasImages ? inputImages.length : undefined,
+        pasteInfo,
         id: getId(),
       };
       setLastUserMessage(input);
@@ -1233,7 +1254,14 @@ export function App(props: AppProps) {
           />
         );
       case "user":
-        return <UserMessage key={item.id} text={item.text} imageCount={item.imageCount} />;
+        return (
+          <UserMessage
+            key={item.id}
+            text={item.text}
+            imageCount={item.imageCount}
+            pasteInfo={item.pasteInfo}
+          />
+        );
       case "task":
         return (
           <Box key={item.id} marginTop={1}>
@@ -1271,7 +1299,13 @@ export function App(props: AppProps) {
         );
       case "server_tool_start":
         return (
-          <ServerToolExecution key={item.id} status="running" name={item.name} input={item.input} />
+          <ServerToolExecution
+            key={item.id}
+            status="running"
+            name={item.name}
+            input={item.input}
+            startedAt={item.startedAt}
+          />
         );
       case "server_tool_done":
         return (
@@ -1280,8 +1314,7 @@ export function App(props: AppProps) {
             status="done"
             name={item.name}
             input={item.input}
-            resultType={item.resultType}
-            data={item.data}
+            durationMs={item.durationMs}
           />
         );
       case "error": {

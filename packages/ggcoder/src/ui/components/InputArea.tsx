@@ -8,8 +8,14 @@ import { SlashCommandMenu, filterCommands, type SlashCommandInfo } from "./Slash
 const MAX_VISIBLE_LINES = 5;
 const PROMPT = "❯ ";
 
+export interface PasteInfo {
+  offset: number; // char index where paste starts in value
+  length: number; // char length of pasted content
+  lineCount: number; // number of lines in pasted content
+}
+
 interface InputAreaProps {
-  onSubmit: (value: string, images: ImageAttachment[]) => void;
+  onSubmit: (value: string, images: ImageAttachment[], paste?: PasteInfo) => void;
   onAbort: () => void;
   disabled?: boolean;
   isActive?: boolean;
@@ -88,6 +94,7 @@ export function InputArea({
   const columns = stdout?.columns ?? 80;
   const [menuIndex, setMenuIndex] = useState(0);
   const [pasteText, setPasteText] = useState(""); // accumulated pasted content
+  const [pasteOffset, setPasteOffset] = useState(0); // where in value the paste starts
   const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Detect if we're in slash command mode
@@ -199,7 +206,17 @@ export function InputArea({
         if (trimmed || images.length > 0) {
           if (trimmed) historyRef.current.push(trimmed);
           historyIndexRef.current = -1;
-          onSubmit(trimmed, [...images]);
+          // Compute paste info adjusted for trimming
+          const trimLeading = value.length - value.trimStart().length;
+          const paste: PasteInfo | undefined =
+            pasteText && pasteText.includes("\n")
+              ? {
+                  offset: Math.max(0, pasteOffset - trimLeading),
+                  length: pasteText.length,
+                  lineCount: pasteText.split("\n").length,
+                }
+              : undefined;
+          onSubmit(trimmed, [...images], paste);
           setValue("");
           setCursor(0);
           setImages([]);
@@ -341,7 +358,10 @@ export function InputArea({
         // For large pastes, Ink may split into multiple chunks, so we
         // accumulate and debounce to capture the full paste.
         if (input.length > 1) {
-          setPasteText((prev) => prev + normalized);
+          setPasteText((prev) => {
+            if (!prev) setPasteOffset(cursor); // record where paste starts on first chunk
+            return prev + normalized;
+          });
           if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current);
           pasteTimerRef.current = setTimeout(() => {
             // After 100ms of quiet, finalize: only keep paste state if it had newlines
@@ -435,31 +455,31 @@ export function InputArea({
         )}
         {(() => {
           if (pasteText && value) {
-            // Show collapsed paste indicator with any typed-after text
             const pasteLineCount = pasteText.split("\n").length;
             const indicator = `[Pasted text #${pasteText.length} +${pasteLineCount} lines]`;
-            // The typed-after portion is everything in value beyond the paste length
-            // (paste is always appended at cursor, so typed-after = value minus paste content)
             const pasteLen = pasteText.length;
-            const typedAfter = value.length > pasteLen ? value.slice(pasteLen) : "";
-            const displayStr = indicator + typedAfter;
-            const cursorInDisplay = Math.max(0, cursor - pasteLen + indicator.length);
+            const typedBefore = value.slice(0, pasteOffset);
+            const typedAfter = value.slice(pasteOffset + pasteLen);
+            const displayStr = typedBefore + indicator + typedAfter;
+
+            // Map real cursor to display cursor
+            let cursorInDisplay: number;
+            if (cursor <= pasteOffset) {
+              cursorInDisplay = cursor;
+            } else if (cursor >= pasteOffset + pasteLen) {
+              cursorInDisplay = cursor - pasteLen + indicator.length;
+            } else {
+              cursorInDisplay = pasteOffset + indicator.length;
+            }
 
             return (
               <Box>
                 <Text color={disabled ? theme.textDim : theme.inputPrompt} bold>
                   {PROMPT}
                 </Text>
-                <Text color={theme.textDim}>{indicator}</Text>
-                {typedAfter && (
-                  <Text color={theme.text}>
-                    {typedAfter.slice(0, cursorInDisplay - indicator.length)}
-                  </Text>
-                )}
+                <Text color={theme.text}>{displayStr.slice(0, cursorInDisplay)}</Text>
                 <Text color={theme.text} inverse={cursorVisible}>
-                  {cursor >= pasteLen && cursorInDisplay < displayStr.length
-                    ? displayStr[cursorInDisplay]
-                    : " "}
+                  {cursorInDisplay < displayStr.length ? displayStr[cursorInDisplay] : " "}
                 </Text>
                 {cursorInDisplay + 1 < displayStr.length && (
                   <Text color={theme.text}>{displayStr.slice(cursorInDisplay + 1)}</Text>
