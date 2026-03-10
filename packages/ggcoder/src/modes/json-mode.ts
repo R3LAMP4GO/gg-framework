@@ -1,5 +1,5 @@
 import type { Provider, ThinkingLevel } from "@kenkaiiii/gg-ai";
-import { AgentSession } from "../core/agent-session.js";
+import { AgentSession, type AgentSessionOptions } from "../core/agent-session.js";
 import { formatUserError } from "../utils/error-handler.js";
 import { closeLogger } from "../core/logger.js";
 
@@ -12,6 +12,7 @@ export interface JsonModeOptions {
   cwd: string;
   thinkingLevel?: ThinkingLevel;
   maxTurns?: number;
+  restrictedTools?: string[];
 }
 
 function emitJson(payload: Record<string, unknown>): void {
@@ -26,7 +27,7 @@ export async function runJsonMode(options: JsonModeOptions): Promise<void> {
   const onSigint = () => ac.abort();
   process.on("SIGINT", onSigint);
 
-  const sessionOpts = {
+  const sessionOpts: AgentSessionOptions = {
     provider: options.provider,
     model: options.model,
     baseUrl: options.baseUrl,
@@ -35,7 +36,7 @@ export async function runJsonMode(options: JsonModeOptions): Promise<void> {
     thinkingLevel: options.thinkingLevel,
     maxTurns: options.maxTurns,
     signal: ac.signal,
-    enableSubAgents: false, // Prevent infinite recursion
+    restrictedTools: options.restrictedTools,
   };
 
   const session = new AgentSession(sessionOpts);

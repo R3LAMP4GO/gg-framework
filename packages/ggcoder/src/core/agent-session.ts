@@ -34,6 +34,10 @@ export interface AgentSessionOptions {
   maxTokens?: number;
   thinkingLevel?: ThinkingLevel;
   signal?: AbortSignal;
+  /** Maximum agent loop turns */
+  maxTurns?: number;
+  /** When set, only these tools are registered (for restricted subagents) */
+  restrictedTools?: string[];
 }
 
 // ── State ──────────────────────────────────────────────────
@@ -114,8 +118,15 @@ export class AgentSession {
 
     // Create tools
     const { tools, processManager } = createTools(this.cwd);
-    this.tools = tools;
     this.processManager = processManager;
+
+    // Apply tool restrictions (for subagent processes with --restricted-tools)
+    if (this.opts.restrictedTools && this.opts.restrictedTools.length > 0) {
+      const allowed = new Set(this.opts.restrictedTools);
+      this.tools = tools.filter((t) => allowed.has(t.name));
+    } else {
+      this.tools = tools;
+    }
 
     // Connect MCP servers (non-blocking — failures are logged and skipped)
     this.mcpManager = new MCPClientManager();

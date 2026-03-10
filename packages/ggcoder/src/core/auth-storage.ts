@@ -67,8 +67,8 @@ export class AuthStorage {
       return creds;
     }
 
-    // GLM and Moonshot use static API keys — no refresh needed
-    if (provider === "glm" || provider === "moonshot") {
+    // GLM, Moonshot, and Ollama use static tokens — no refresh needed
+    if (provider === "glm" || provider === "moonshot" || provider === "ollama") {
       return creds;
     }
 

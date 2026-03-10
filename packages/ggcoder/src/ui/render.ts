@@ -1,5 +1,6 @@
 import React from "react";
 import { render } from "ink";
+import chalk from "chalk";
 import type { Message, Provider, ServerToolDefinition, ThinkingLevel } from "@kenkaiiii/gg-ai";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
@@ -121,4 +122,20 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
   await waitUntilExit();
 
   process.stdout.off("resize", onResize);
+
+  // Print resume session message after Ink unmounts (similar to Claude Code)
+  const dim = chalk.hex("#6b7280");
+  const accent = chalk.hex("#a78bfa");
+  const hint = chalk.hex("#60a5fa");
+
+  process.stdout.write("\n");
+  process.stdout.write(dim("  Catch you later! ✌️\n"));
+  process.stdout.write("\n");
+  process.stdout.write(dim("  To resume this session:\n"));
+  process.stdout.write(hint("    ggcoder continue\n"));
+  if (config.sessionPath) {
+    process.stdout.write(dim("  Or with a specific session:\n"));
+    process.stdout.write(hint(`    ggcoder -s ${accent(config.sessionPath)}\n`));
+  }
+  process.stdout.write("\n");
 }

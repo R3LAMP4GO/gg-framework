@@ -40,9 +40,16 @@ export function stream(options: StreamOptions): StreamResult {
         ...options,
         baseUrl: options.baseUrl ?? "https://api.moonshot.ai/v1",
       });
+    case "ollama":
+      return streamOpenAI({
+        ...options,
+        baseUrl: options.baseUrl ?? "http://localhost:11434/v1",
+        // Ollama doesn't require an API key but the OpenAI SDK expects one
+        apiKey: options.apiKey || "ollama",
+      });
     default:
       throw new GGAIError(
-        `Unknown provider: ${options.provider as string}. Supported: "anthropic", "openai", "glm", "moonshot"`,
+        `Unknown provider: ${options.provider as string}. Supported: "anthropic", "openai", "glm", "moonshot", "ollama"`,
       );
   }
 }

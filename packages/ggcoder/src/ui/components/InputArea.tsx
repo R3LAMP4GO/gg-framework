@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { Text, Box, useInput, useStdout } from "ink";
+import { Text, Box, useInput, useStdout, useApp } from "ink";
 import { useTheme } from "../theme/theme.js";
 import type { ImageAttachment } from "../../utils/image.js";
 import { extractImagePaths, readImageFile, getClipboardImage } from "../../utils/image.js";
@@ -15,6 +15,7 @@ interface InputAreaProps {
   isActive?: boolean;
   onDownAtEnd?: () => void;
   onShiftTab?: () => void;
+  onTogglePlan?: () => void;
   onToggleTasks?: () => void;
   cwd: string;
   commands?: SlashCommandInfo[];
@@ -73,11 +74,13 @@ export function InputArea({
   isActive = true,
   onDownAtEnd,
   onShiftTab,
+  onTogglePlan,
   onToggleTasks,
   cwd,
   commands = [],
 }: InputAreaProps) {
   const theme = useTheme();
+  const app = useApp();
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -206,6 +209,18 @@ export function InputArea({
         return;
       }
 
+      // Ctrl+Tab — toggle plan mode
+      if (key.ctrl && key.tab) {
+        onTogglePlan?.();
+        return;
+      }
+
+      // Ctrl+P — toggle plan mode (alternate binding)
+      if (key.ctrl && input === "p") {
+        onTogglePlan?.();
+        return;
+      }
+
       // Ctrl+I — paste image from clipboard
       if (key.ctrl && input === "i") {
         getClipboardImage().then((img) => {
@@ -225,7 +240,8 @@ export function InputArea({
       }
 
       if (key.ctrl && input === "d") {
-        process.exit(0);
+        app.exit();
+        return;
       }
 
       // Home / End
@@ -391,6 +407,32 @@ export function InputArea({
       : value.indexOf(" ")
     : 0;
 
+  // Build a set of known command names for inline highlighting (e.g. "fix this /scan")
+  const knownCommandNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const cmd of commands) {
+      names.add(cmd.name);
+      for (const alias of cmd.aliases) names.add(alias);
+    }
+    return names;
+  }, [commands]);
+
+  // Find all inline /command token positions for highlighting
+  const inlineCommandRanges = useMemo(() => {
+    if (isCommand) return []; // start-of-line commands use the existing highlight
+    const ranges: Array<{ start: number; end: number }> = [];
+    const regex = /(?:^|\s)(\/([a-z][\w-]*))/gi;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(value)) !== null) {
+      const name = match[2].toLowerCase();
+      if (knownCommandNames.has(name)) {
+        const tokenStart = match.index + match[0].length - match[1].length;
+        ranges.push({ start: tokenStart, end: tokenStart + match[1].length });
+      }
+    }
+    return ranges;
+  }, [value, isCommand, knownCommandNames]);
+
   return (
     <Box flexDirection="column">
       <Box
@@ -435,28 +477,45 @@ export function InputArea({
             offset++; // newline
           }
 
-          // Determine color for each character based on whether it's in the command portion
+          // Check if a given absolute offset falls inside any highlighted range
+          const isInHighlightedRange = (absOffset: number): boolean => {
+            if (isCommand) return absOffset < commandEndIndex;
+            for (const r of inlineCommandRanges) {
+              if (absOffset >= r.start && absOffset < r.end) return true;
+            }
+            return false;
+          };
+
+          // Render text with command tokens highlighted (both start-of-line and inline)
           const renderSegments = (text: string, textStartOffset: number) => {
-            if (!isCommand || textStartOffset >= commandEndIndex) {
-              // Entirely normal text
+            if (inlineCommandRanges.length === 0 && !isCommand) {
               return <Text color={theme.text}>{text}</Text>;
             }
-            const cmdChars = Math.min(text.length, commandEndIndex - textStartOffset);
-            if (cmdChars >= text.length) {
-              // Entirely command text
-              return (
-                <Text color={theme.commandColor} bold>
-                  {text}
-                </Text>
-              );
+            // Walk through the text and split into highlighted/normal segments
+            const segments: Array<{ text: string; highlighted: boolean }> = [];
+            let pos = 0;
+            while (pos < text.length) {
+              const absPos = textStartOffset + pos;
+              const highlighted = isInHighlightedRange(absPos);
+              const start = pos;
+              while (pos < text.length && isInHighlightedRange(textStartOffset + pos) === highlighted) {
+                pos++;
+              }
+              segments.push({ text: text.slice(start, pos), highlighted });
             }
-            // Split: command portion + normal portion
+            if (segments.length === 0) return <Text color={theme.text}>{text}</Text>;
+            if (segments.length === 1) {
+              return segments[0].highlighted
+                ? <Text color={theme.commandColor} bold>{segments[0].text}</Text>
+                : <Text color={theme.text}>{segments[0].text}</Text>;
+            }
             return (
               <>
-                <Text color={theme.commandColor} bold>
-                  {text.slice(0, cmdChars)}
-                </Text>
-                <Text color={theme.text}>{text.slice(cmdChars)}</Text>
+                {segments.map((seg, idx) =>
+                  seg.highlighted
+                    ? <Text key={idx} color={theme.commandColor} bold>{seg.text}</Text>
+                    : <Text key={idx} color={theme.text}>{seg.text}</Text>
+                )}
               </>
             );
           };
@@ -465,7 +524,7 @@ export function InputArea({
           const charUnderCursor = showCursor ? (col < line.length ? line[col] : " ") : "";
           const after = showCursor ? line.slice(col + (col < line.length ? 1 : 0)) : "";
           const cursorCharOffset = lineStartOffset + col;
-          const cursorInCommand = isCommand && cursorCharOffset < commandEndIndex;
+          const cursorInCommand = isInHighlightedRange(cursorCharOffset);
 
           return (
             <Box key={i}>

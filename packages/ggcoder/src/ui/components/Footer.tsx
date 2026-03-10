@@ -8,6 +8,7 @@ interface FooterProps {
   cwd: string;
   gitBranch?: string | null;
   thinkingEnabled?: boolean;
+  planModeActive?: boolean;
 }
 
 // Model ID → short display name
@@ -73,7 +74,14 @@ const PARTIAL_BLOCKS = [
   "\u2588",
 ];
 
-export function Footer({ model, tokensIn, cwd, gitBranch, thinkingEnabled }: FooterProps) {
+export function Footer({
+  model,
+  tokensIn,
+  cwd,
+  gitBranch,
+  thinkingEnabled,
+  planModeActive,
+}: FooterProps) {
   const theme = useTheme();
   const { stdout } = useStdout();
   const columns = stdout?.columns ?? 80;
@@ -117,14 +125,16 @@ export function Footer({ model, tokensIn, cwd, gitBranch, thinkingEnabled }: Foo
     }
   }
 
-  // "Thinking on" / "Thinking off" + key hint (⇧⇹)
+  // Mode indicators: thinking toggle (⇧⇹) + plan mode (^P)
   const thinkingText = thinkingEnabled ? "Thinking on" : "Thinking off";
-  const thinkingLen = thinkingText.length + 3 + 3; // " │ " separator + " ⇧⇹"
+  const planText = planModeActive ? " · 📋 Plan" : "";
+  const modeText = thinkingText + planText;
+  const modeLen = modeText.length + 3 + 8; // " │ " separator + " ⇧⇹ ^P"
 
   // Truncate path if footer would overflow
   const rightLen =
     modelName.length +
-    thinkingLen +
+    modeLen +
     3 +
     barWidth +
     1 +
@@ -165,7 +175,8 @@ export function Footer({ model, tokensIn, cwd, gitBranch, thinkingEnabled }: Foo
         </Text>
         {sep}
         <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
-        <Text color={theme.border}>{" \u21E7\u21B9"}</Text>
+        {planModeActive && <Text color={theme.warning}>{" · 📋 Plan"}</Text>}
+        <Text color={theme.border}>{" ⇧⇹ ^⇹Plan"}</Text>
       </Box>
     </Box>
   );

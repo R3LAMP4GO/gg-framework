@@ -20,6 +20,7 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { createTools } from "./tools/index.js";
 import { MCPClientManager, DEFAULT_MCP_SERVERS } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
+import { BUILTIN_AGENTS } from "./core/builtin-agents.js";
 import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./core/oauth/types.js";
@@ -38,7 +39,7 @@ Commands:
   continue                  Resume the most recent session for this directory
 
 Options:
-  -p, --provider <name>     LLM provider (anthropic, openai, glm, moonshot) [default: anthropic]
+  -p, --provider <name>     LLM provider (anthropic, openai, glm, moonshot, ollama) [default: anthropic]
   -m, --model <name>        Model name [default: claude-opus-4-6]
       --base-url <url>      Custom API base URL
       --system-prompt <text> Override system prompt
@@ -103,6 +104,7 @@ function main(): void {
       thinking: { type: "string" },
       "max-turns": { type: "string" },
       session: { type: "string", short: "s" },
+      "restricted-tools": { type: "string" },
       print: { type: "boolean" },
       json: { type: "boolean" },
       version: { type: "boolean", short: "v" },
@@ -123,7 +125,7 @@ function main(): void {
   }
 
   // Load saved settings for model/provider persistence
-  let savedProvider: "anthropic" | "openai" | "glm" | "moonshot" | undefined;
+  let savedProvider: "anthropic" | "openai" | "glm" | "moonshot" | "ollama" | undefined;
   let savedModel: string | undefined;
   let savedThinkingEnabled = false;
   try {
@@ -141,14 +143,16 @@ function main(): void {
     | "openai"
     | "glm"
     | "moonshot"
+    | "ollama"
     | undefined;
-  const provider: "anthropic" | "openai" | "glm" | "moonshot" =
+  const provider: "anthropic" | "openai" | "glm" | "moonshot" | "ollama" =
     providerFromFlag ?? savedProvider ?? "anthropic";
 
   function getHardcodedDefault(p: string): string {
     if (p === "openai") return "gpt-5.3-codex";
     if (p === "glm") return "glm-5";
     if (p === "moonshot") return "kimi-k2.5";
+    if (p === "ollama") return "huihui_ai/qwen3-abliterated:14b";
     return "claude-opus-4-6";
   }
 
@@ -194,6 +198,14 @@ function main(): void {
       process.exit(1);
     }
 
+    // Parse --restricted-tools flag (comma-separated list)
+    const restrictedTools = values["restricted-tools"]
+      ? values["restricted-tools"]
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : undefined;
+
     runJsonMode({
       message,
       provider,
@@ -203,6 +215,7 @@ function main(): void {
       cwd: process.cwd(),
       thinkingLevel,
       maxTurns,
+      restrictedTools,
     }).catch((err) => {
       log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
       closeLogger();
@@ -261,7 +274,7 @@ async function runInkTUI(opts: {
   const creds = await authStorage.resolveCredentials(provider);
 
   // Detect all logged-in providers and preload their credentials
-  const allProviders: Provider[] = ["anthropic", "openai", "glm", "moonshot"];
+  const allProviders: Provider[] = ["anthropic", "openai", "glm", "moonshot", "ollama"];
   const loggedInProviders: Provider[] = [];
   const credentialsByProvider: Record<string, { accessToken: string; accountId?: string }> = {};
 
@@ -281,11 +294,17 @@ async function runInkTUI(opts: {
     }
   }
 
-  // Discover agents and build tools
-  const agents = await discoverAgents({
+  // Discover agents (user-defined) and merge with built-in agents
+  const userAgents = await discoverAgents({
     globalAgentsDir: paths.agentsDir,
     projectDir: cwd,
   });
+  // User-defined agents override built-ins with the same name
+  const userNames = new Set(userAgents.map((a) => a.name.toLowerCase()));
+  const agents = [
+    ...BUILTIN_AGENTS.filter((a) => !userNames.has(a.name.toLowerCase())),
+    ...userAgents,
+  ];
 
   // Build system prompt & tools (with sub-agent support)
   const systemPrompt = opts.systemPrompt ?? (await buildSystemPrompt(cwd));
@@ -428,7 +447,31 @@ async function runLogin(): Promise<void> {
     };
 
     let creds;
-    if (provider === "glm" || provider === "moonshot") {
+    if (provider === "ollama") {
+      // Ollama runs locally — no API key needed, just verify it's reachable
+      callbacks.onStatus("Checking Ollama connection at http://localhost:11434...");
+      try {
+        const res = await fetch("http://localhost:11434/api/tags");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { models?: { name: string }[] };
+        const models = data.models ?? [];
+        callbacks.onStatus(
+          `Found ${models.length} model(s): ${models.map((m) => m.name).join(", ")}`,
+        );
+      } catch {
+        console.log(
+          chalk.hex("#ef4444")(
+            `\n✗ Could not connect to Ollama. Make sure it's running:\n  ollama serve`,
+          ),
+        );
+        return;
+      }
+      creds = {
+        accessToken: "ollama",
+        refreshToken: "",
+        expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000 * 100, // ~100 years
+      } satisfies OAuthCredentials;
+    } else if (provider === "glm" || provider === "moonshot") {
       const keyLabel = provider === "glm" ? "Z.AI" : "Moonshot";
       const apiKey = await rl.question(chalk.hex("#60a5fa")(`Paste your ${keyLabel} API key: `));
       if (!apiKey.trim()) {
@@ -484,6 +527,7 @@ function displayName(provider: Provider): string {
   if (provider === "anthropic") return "Anthropic";
   if (provider === "glm") return "Z.AI (GLM)";
   if (provider === "moonshot") return "Moonshot";
+  if (provider === "ollama") return "Ollama (Local)";
   return "OpenAI";
 }
 

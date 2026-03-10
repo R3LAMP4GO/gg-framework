@@ -38,7 +38,7 @@ export function SlashCommandMenu({ commands, filter, selectedIndex }: SlashComma
         const aliasStr =
           cmd.aliases.length > 0 ? ` (${cmd.aliases.map((a) => "/" + a).join(", ")})` : "";
         return (
-          <Box key={cmd.name}>
+          <Box key={`${i}-${cmd.name}`}>
             <Text color={isSelected ? theme.commandColor : theme.textDim}>
               {isSelected ? "› " : "  "}
             </Text>

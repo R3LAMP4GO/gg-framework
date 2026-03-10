@@ -87,6 +87,25 @@ export const MODELS: ModelInfo[] = [
     supportsThinking: true,
     costTier: "medium",
   },
+  // ── Ollama (Local) ──────────────────────────────────────
+  {
+    id: "huihui_ai/qwen3-abliterated:32b",
+    name: "Qwen3 Abliterated 32B",
+    provider: "ollama",
+    contextWindow: 40_960,
+    maxOutputTokens: 8_192,
+    supportsThinking: false,
+    costTier: "low",
+  },
+  {
+    id: "huihui_ai/qwen3-abliterated:14b",
+    name: "Qwen3 Abliterated 14B",
+    provider: "ollama",
+    contextWindow: 40_960,
+    maxOutputTokens: 8_192,
+    supportsThinking: true,
+    costTier: "low",
+  },
 ];
 
 export function getModel(id: string): ModelInfo | undefined {
@@ -101,6 +120,7 @@ export function getDefaultModel(provider: Provider): ModelInfo {
   if (provider === "openai") return MODELS.find((m) => m.id === "gpt-5.3-codex")!;
   if (provider === "glm") return MODELS.find((m) => m.id === "glm-5")!;
   if (provider === "moonshot") return MODELS.find((m) => m.id === "kimi-k2.5")!;
+  if (provider === "ollama") return MODELS.find((m) => m.id === "huihui_ai/qwen3-abliterated:14b")!;
   return MODELS.find((m) => m.id === "claude-sonnet-4-6")!;
 }
 

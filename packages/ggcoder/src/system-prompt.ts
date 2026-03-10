@@ -1,13 +1,31 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { formatSkillsForPrompt, type Skill } from "./core/skills.js";
+import { PLAN_MODE_SYSTEM_PROMPT, type PlanModeState } from "./core/plan-mode.js";
 
 const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md"];
+
+export interface BuildSystemPromptOptions {
+  skills?: Skill[];
+  planModeState?: PlanModeState;
+}
 
 /**
  * Build the system prompt dynamically based on cwd and context.
  */
-export async function buildSystemPrompt(cwd: string, skills?: Skill[]): Promise<string> {
+export async function buildSystemPrompt(
+  cwd: string,
+  skillsOrOpts?: Skill[] | BuildSystemPromptOptions,
+): Promise<string> {
+  // Support both old signature (skills array) and new options object
+  let skills: Skill[] | undefined;
+  let planModeState: PlanModeState | undefined;
+  if (Array.isArray(skillsOrOpts)) {
+    skills = skillsOrOpts;
+  } else if (skillsOrOpts) {
+    skills = skillsOrOpts.skills;
+    planModeState = skillsOrOpts.planModeState;
+  }
   const sections: string[] = [];
 
   // 1. Identity
@@ -63,6 +81,7 @@ export async function buildSystemPrompt(cwd: string, skills?: Skill[]): Promise<
       `- **task_output**: Read output from a background process by ID. Returns new output since last read (incremental). Use \`from_start=true\` to read from the beginning.\n` +
       `- **task_stop**: Stop a background process by ID. Sends SIGTERM, then SIGKILL after 5 seconds.\n` +
       `- **subagent**: Delegate focused, isolated subtasks (research, parallel exploration, independent fixes).\n` +
+      `  - **Built-in agents**: \`explore\` (fast read-only search, cheapest model), \`plan\` (architecture/planning), \`worker\` (full capability). Prefer \`explore\` for any codebase search. Spawn parallel agents when tasks are independent.\n` +
       `- **tasks**: Manage the project task pane (Shift+\`). Actions: \`add\` (title + prompt required), \`list\`, \`done\` (id required), \`remove\` (id required). Proactively add tasks when you notice issues while working.\n` +
       `  - **title**: Short label (~10 words max) shown in the task pane.\n` +
       `  - **prompt**: Standalone instruction sent to an agent with NO prior context. Concise, actionable directive with specific file paths and what to change. The agent must complete it from the prompt alone. Keep it focused (1-3 sentences). If the task requires latest docs or APIs, tell the agent to research/fetch them.\n` +
@@ -129,6 +148,11 @@ export async function buildSystemPrompt(cwd: string, skills?: Skill[]): Promise<
   sections.push(
     `## Environment\n\n` + `- Working directory: ${cwd}\n` + `- Platform: ${process.platform}`,
   );
+
+  // 10. Plan mode — injected only when active
+  if (planModeState === "planning") {
+    sections.push(PLAN_MODE_SYSTEM_PROMPT);
+  }
 
   // Dynamic section (uncached) — separated by marker so the transform layer
   // can split the system prompt into cached + uncached blocks.

@@ -102,6 +102,13 @@ function AgentRow({
         ) : (
           <Text color={theme.error}>{"\u2717 "}</Text>
         )}
+        {agent.agentName && agent.agentName !== "default" && (
+          <Text color={theme.accent} dimColor={!isRunning}>
+            {"["}
+            {agent.agentName}
+            {"] "}
+          </Text>
+        )}
         <Text bold={isRunning} color={statusColor}>
           {taskDisplay}
         </Text>

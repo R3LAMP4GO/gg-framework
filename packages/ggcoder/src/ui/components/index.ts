@@ -11,3 +11,4 @@ export { SelectList } from "./SelectList.js";
 export { ModelSelector } from "./ModelSelector.js";
 export { SessionSelector } from "./SessionSelector.js";
 export { SettingsSelector } from "./SettingsSelector.js";
+export { QuestionOverlay } from "./QuestionOverlay.js";

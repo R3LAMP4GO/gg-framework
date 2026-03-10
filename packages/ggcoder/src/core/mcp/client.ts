@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { z } from "zod";
 import { log } from "../logger.js";
-import type { MCPServerConfig } from "./types.js";
+import type { MCPServerConfig, ElicitationHandler } from "./types.js";
 
 interface ConnectedServer {
   name: string;
@@ -13,6 +13,12 @@ interface ConnectedServer {
 
 export class MCPClientManager {
   private servers: ConnectedServer[] = [];
+  private elicitationHandler: ElicitationHandler | null = null;
+
+  /** Register a handler for MCP elicitation/create requests */
+  setElicitationHandler(handler: ElicitationHandler | null): void {
+    this.elicitationHandler = handler;
+  }
 
   async connectAll(configs: MCPServerConfig[]): Promise<AgentTool[]> {
     const enabled = configs.filter((c) => c.enabled !== false);
@@ -41,8 +47,36 @@ export class MCPClientManager {
       requestInit: config.headers ? { headers: config.headers } : undefined,
     });
 
-    const client = new Client({ name: "ggcoder", version: "1.0.0" });
+    const client = new Client(
+      { name: "ggcoder", version: "1.0.0" },
+      { capabilities: { elicitation: {} } },
+    );
     const timeout = config.timeout ?? 30_000;
+
+    // Register elicitation handler before connecting
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).setRequestHandler?.(
+      { method: "elicitation/create" },
+      async (request: { params?: { message?: string; requestedSchema?: unknown; mode?: string } }) => {
+        if (!this.elicitationHandler) {
+          return { action: "cancel" as const };
+        }
+        const params = request.params ?? {};
+        try {
+          const result = await this.elicitationHandler({
+            message: String(params.message ?? ""),
+            requestedSchema: params.requestedSchema as ElicitationHandler extends (p: infer P) => unknown ? P extends { requestedSchema?: infer S } ? S : undefined : undefined,
+          });
+          return {
+            action: result.action,
+            content: result.content,
+          };
+        } catch (err) {
+          log("ERROR", "mcp", `Elicitation handler error: ${err instanceof Error ? err.message : String(err)}`);
+          return { action: "cancel" as const };
+        }
+      },
+    );
 
     await client.connect(transport, { timeout });
     this.servers.push({ name: config.name, client, transport });

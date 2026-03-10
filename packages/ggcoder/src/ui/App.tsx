@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, Static, useStdout } from "ink";
+import { Box, Text, Static, useStdout, useApp } from "ink";
 import { useTerminalSize } from "./hooks/useTerminalSize.js";
 import crypto, { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -45,7 +45,19 @@ import { shouldCompact, compact } from "../core/compaction/compactor.js";
 import { estimateConversationTokens } from "../core/compaction/token-estimator.js";
 import { PROMPT_COMMANDS, getPromptCommand } from "../core/prompt-commands.js";
 import { loadCustomCommands, type CustomCommand } from "../core/custom-commands.js";
+import { extractEmbedded } from "../core/slash-commands.js";
 import { pruneHistory, flushOnTurnText, flushOnTurnEnd } from "./live-item-flush.js";
+import {
+  createPlanModeManager,
+  type PlanModeState,
+  type PlanModeManager,
+} from "../core/plan-mode.js";
+import { PlanOverlay } from "./components/PlanOverlay.js";
+import { QuestionOverlay } from "./components/QuestionOverlay.js";
+import { setQuestionHandler } from "../tools/ask-user-question.js";
+import type { Question, QuestionResult, ElicitationRequest } from "../tools/ask-user-question.js";
+import { trackQuestion } from "../core/telemetry.js";
+import { copyToClipboard } from "../utils/clipboard.js";
 
 // ── Completed Item Types ───────────────────────────────────
 
@@ -324,6 +336,7 @@ export interface AppProps {
 export function App(props: AppProps) {
   const theme = useTheme();
   const { stdout } = useStdout();
+  const app = useApp();
   const { resizeKey } = useTerminalSize();
 
   // Terminal title — updated later after agentLoop is created
@@ -366,6 +379,43 @@ export function App(props: AppProps) {
   const [currentModel, setCurrentModel] = useState(props.model);
   const [currentProvider, setCurrentProvider] = useState(props.provider);
   const [thinkingEnabled, setThinkingEnabled] = useState(!!props.thinking);
+
+  // ── Plan mode ──────────────────────────────────────────
+  const planManagerRef = useRef<PlanModeManager>(createPlanModeManager(props.cwd));
+  const [planModeState, setPlanModeState] = useState<PlanModeState>("idle");
+  const [showPlanReview, setShowPlanReview] = useState(false);
+
+  // Subscribe to plan mode state changes
+  useEffect(() => {
+    const unsub = planManagerRef.current.onChange((state) => {
+      setPlanModeState(state);
+      if (state === "reviewing") {
+        setShowPlanReview(true);
+      } else {
+        setShowPlanReview(false);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // ── AskUserQuestion tool overlay ──────────────────────
+  const [pendingQuestions, setPendingQuestions] = useState<{
+    questions: Question[];
+    elicitation?: ElicitationRequest;
+    resolve: (result: QuestionResult) => void;
+  } | null>(null);
+
+  // Register the question handler so the ask_user_question tool can pause
+  // and wait for user answers via the UI overlay
+  useEffect(() => {
+    setQuestionHandler((questions, elicitation) => {
+      return new Promise<QuestionResult>((resolve) => {
+        setPendingQuestions({ questions, elicitation, resolve });
+      });
+    });
+    return () => setQuestionHandler(null);
+  }, []);
+
   const messagesRef = useRef<Message[]>(props.messages);
   const nextIdRef = useRef(0);
   const sessionManagerRef = useRef(
@@ -805,6 +855,7 @@ export function App(props: AppProps) {
         });
         setDoneStatus({ durationMs, toolsUsed, verb: pickDurationVerb(toolsUsed) });
         playNotificationSound();
+
         // Two-phase flush to avoid Ink text clipping.
         // Phase 1 (here): clear the live area so Ink commits a render with
         // the smaller output and updates its internal line counter.
@@ -919,9 +970,47 @@ export function App(props: AppProps) {
         return;
       }
 
-      // Handle /quit — exit the agent
+      // Handle /plan — toggle plan mode or enter plan mode with args
+      if (trimmed === "/plan" || trimmed.startsWith("/plan ")) {
+        const planArgs = trimmed === "/plan" ? "" : trimmed.slice(6).trim();
+        const pm = planManagerRef.current;
+        if (pm.state === "idle") {
+          pm.enter(planArgs || "User toggled plan mode");
+          setLiveItems((prev) => [
+            ...prev,
+            { kind: "info", text: `📋 Plan mode on — read-only exploration`, id: getId() },
+          ]);
+          if (planArgs) {
+            // Send the plan args as a user message to kick off planning
+            setLiveItems((prev) => {
+              if (prev.length > 0) {
+                setHistory((h) => pruneHistory([...h, ...prev]));
+              }
+              return [];
+            });
+            const userItem: UserItem = { kind: "user", text: trimmed, id: getId() };
+            setLastUserMessage(trimmed);
+            setDoneStatus(null);
+            setLiveItems([userItem]);
+            try {
+              await agentLoop.run(planArgs);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              log("ERROR", "error", msg);
+              setLiveItems((prev) => [...prev, { kind: "error", message: msg, id: getId() }]);
+            }
+          }
+        } else {
+          pm.cancel();
+          setLiveItems((prev) => [...prev, { kind: "info", text: `Plan mode off`, id: getId() }]);
+        }
+        return;
+      }
+
+      // Handle /quit — exit the agent cleanly (resume message printed after unmount)
       if (trimmed === "/quit" || trimmed === "/q" || trimmed === "/exit") {
-        process.exit(0);
+        app.exit();
+        return;
       }
 
       // Handle /clear — reset session and clear terminal
@@ -934,6 +1023,45 @@ export function App(props: AppProps) {
         messagesRef.current = messagesRef.current.slice(0, 1); // keep system prompt
         agentLoop.reset();
         setLiveItems([{ kind: "info", text: "Session cleared.", id: getId() }]);
+        return;
+      }
+
+      // Handle /copy — copy last assistant response to clipboard
+      if (trimmed === "/copy") {
+        const allItems = [...history, ...liveItems];
+        const lastAssistant = [...allItems]
+          .reverse()
+          .find((item) => item.kind === "assistant") as AssistantItem | undefined;
+        if (lastAssistant?.text) {
+          try {
+            await copyToClipboard(lastAssistant.text);
+            const lines = lastAssistant.text.split("\n").length;
+            const chars = lastAssistant.text.length;
+            log("INFO", "command", "Copied last response to clipboard", {
+              chars: String(chars),
+              lines: String(lines),
+            });
+            setLiveItems((prev) => [
+              ...prev,
+              {
+                kind: "info",
+                text: `Copied to clipboard (${chars} chars, ${lines} lines)`,
+                id: getId(),
+              },
+            ]);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setLiveItems((prev) => [
+              ...prev,
+              { kind: "error", message: `Failed to copy: ${msg}`, id: getId() },
+            ]);
+          }
+        } else {
+          setLiveItems((prev) => [
+            ...prev,
+            { kind: "info", text: "Nothing to copy — no assistant response yet", id: getId() },
+          ]);
+        }
         return;
       }
 
@@ -999,6 +1127,61 @@ export function App(props: AppProps) {
         }
       }
 
+      // Check for embedded prompt commands anywhere in the input
+      // e.g. "fix the auth flow /scan" or "update deps /verify"
+      {
+        const knownNames = new Set<string>([
+          ...PROMPT_COMMANDS.map((c) => c.name),
+          ...PROMPT_COMMANDS.flatMap((c) => c.aliases),
+          ...customCommands.map((c) => c.name),
+        ]);
+        const embedded = extractEmbedded(trimmed, knownNames);
+        if (embedded) {
+          log("INFO", "command", `Embedded command: /${embedded.command} (args: ${embedded.args})`);
+          const builtinCmd = getPromptCommand(embedded.command);
+          const customCmd = !builtinCmd
+            ? customCommands.find((c) => c.name === embedded.command)
+            : undefined;
+          const promptText = builtinCmd?.prompt ?? customCmd?.prompt;
+
+          if (promptText) {
+            // Move live items into history before starting
+            setLiveItems((prev) => {
+              if (prev.length > 0) {
+                setHistory((h) => pruneHistory([...h, ...prev]));
+              }
+              return [];
+            });
+
+            // Show the original user input as the user message
+            const userItem: UserItem = { kind: "user", text: trimmed, id: getId() };
+            setLastUserMessage(trimmed);
+            setDoneStatus(null);
+            setLiveItems([userItem]);
+
+            // Send the full prompt with user context
+            const fullPrompt = embedded.args
+              ? `${promptText}\n\n## User Instructions\n\n${embedded.args}`
+              : promptText;
+            try {
+              await agentLoop.run(fullPrompt);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              log("ERROR", "error", msg);
+              const isAbort = msg.includes("aborted") || msg.includes("abort");
+              setLiveItems((prev) => [
+                ...prev,
+                isAbort
+                  ? { kind: "info", text: "Request was stopped.", id: getId() }
+                  : { kind: "error", message: msg, id: getId() },
+              ]);
+            }
+            reloadCustomCommands();
+            return;
+          }
+        }
+      }
+
       // Move any remaining live items into history (Static) before starting new turn
       setLiveItems((prev) => {
         if (prev.length > 0) {
@@ -1054,32 +1237,46 @@ export function App(props: AppProps) {
         ]);
       }
     },
-    [agentLoop, props.onSlashCommand, compactConversation],
+    [agentLoop, props.onSlashCommand, compactConversation, customCommands, reloadCustomCommands],
   );
 
   const handleAbort = useCallback(() => {
     if (agentLoop.isRunning) {
       agentLoop.abort();
     } else {
-      process.exit(0);
+      app.exit();
     }
-  }, [agentLoop]);
+  }, [agentLoop, app]);
 
-  const handleToggleThinking = useCallback(() => {
-    setThinkingEnabled((prev) => {
-      const next = !prev;
-      log("INFO", "thinking", `Thinking ${next ? "enabled" : "disabled"}`);
+  // Shift+Tab toggles thinking on/off
+  const handleShiftTabCycle = useCallback(() => {
+    const next = !thinkingEnabled;
+    setThinkingEnabled(next);
+    log("INFO", "thinking", next ? "Thinking enabled" : "Thinking disabled");
+    setLiveItems((items) => [
+      ...items,
+      { kind: "info", text: next ? "Thinking on" : "Thinking off", id: getId() },
+    ]);
+    if (props.settingsFile) {
+      const sm = new SettingsManager(props.settingsFile);
+      sm.load().then(() => sm.set("thinkingEnabled", next));
+    }
+  }, [props.settingsFile, thinkingEnabled]);
+
+  // Ctrl+P toggles plan mode on/off (separate from thinking)
+  const handleTogglePlan = useCallback(() => {
+    const pm = planManagerRef.current;
+    if (pm.state === "idle") {
+      pm.enter("User toggled plan mode via Ctrl+P");
       setLiveItems((items) => [
         ...items,
-        { kind: "info", text: `Thinking ${next ? "on" : "off"}`, id: getId() },
+        { kind: "info", text: "📋 Plan mode on — read-only exploration", id: getId() },
       ]);
-      if (props.settingsFile) {
-        const sm = new SettingsManager(props.settingsFile);
-        sm.load().then(() => sm.set("thinkingEnabled", next));
-      }
-      return next;
-    });
-  }, [props.settingsFile]);
+    } else {
+      pm.cancel();
+      setLiveItems((items) => [...items, { kind: "info", text: "Plan mode off", id: getId() }]);
+    }
+  }, []);
 
   const handleModelSelect = useCallback(
     (value: string) => {
@@ -1111,13 +1308,17 @@ export function App(props: AppProps) {
   );
 
   // All available slash commands for the command palette
-  const allCommands = useMemo<SlashCommandInfo[]>(
-    () => [
+  const allCommands = useMemo<SlashCommandInfo[]>(() => {
+    const customNames = new Set(customCommands.map((c) => c.name));
+    const all: SlashCommandInfo[] = [
       { name: "model", aliases: ["m"], description: "Switch model" },
       { name: "compact", aliases: ["c"], description: "Compact conversation" },
       { name: "clear", aliases: [], description: "Clear session and terminal" },
+      { name: "copy", aliases: [], description: "Copy last response to clipboard" },
+      { name: "plan", aliases: [], description: "Toggle plan mode (read-only exploration)" },
       { name: "quit", aliases: ["q", "exit"], description: "Exit the agent" },
-      ...PROMPT_COMMANDS.map((cmd) => ({
+      // Built-in prompt commands, excluding any overridden by custom commands
+      ...PROMPT_COMMANDS.filter((cmd) => !customNames.has(cmd.name)).map((cmd) => ({
         name: cmd.name,
         aliases: cmd.aliases,
         description: cmd.description,
@@ -1127,9 +1328,12 @@ export function App(props: AppProps) {
         aliases: [] as string[],
         description: cmd.description,
       })),
-    ],
-    [customCommands],
-  );
+    ];
+    // Deduplicate by name (last wins)
+    const seen = new Map<string, SlashCommandInfo>();
+    for (const cmd of all) seen.set(cmd.name, cmd);
+    return [...seen.values()];
+  }, [customCommands]);
 
   const renderItem = (item: CompletedItem) => {
     switch (item.kind) {
@@ -1378,14 +1582,161 @@ export function App(props: AppProps) {
             )
           )}
 
+          {/* Plan review overlay */}
+          {showPlanReview && planManagerRef.current.planContent && (
+            <PlanOverlay
+              planContent={planManagerRef.current.planContent}
+              planFilePath={planManagerRef.current.planFilePath}
+              onApprove={() => {
+                const pm = planManagerRef.current;
+                pm.approve();
+                setLiveItems((prev) => [
+                  ...prev,
+                  { kind: "info", text: "✅ Plan approved — executing…", id: getId() },
+                ]);
+              }}
+              onReject={(feedback) => {
+                const pm = planManagerRef.current;
+                pm.reject(feedback);
+                setLiveItems((prev) => [
+                  ...prev,
+                  { kind: "info", text: `📝 Plan rejected — revising with feedback`, id: getId() },
+                ]);
+                // Re-run with feedback
+                void agentLoop.run(
+                  `The user rejected the plan with this feedback: ${feedback}\n\nPlease revise the plan.`,
+                );
+              }}
+              onCancel={() => {
+                const pm = planManagerRef.current;
+                pm.cancel();
+                setLiveItems((prev) => [
+                  ...prev,
+                  { kind: "info", text: "Plan cancelled", id: getId() },
+                ]);
+              }}
+              onEdit={async () => {
+                const filePath = planManagerRef.current.planFilePath;
+                if (!filePath) return;
+
+                const editor = process.env.VISUAL || process.env.EDITOR || "vi";
+                const { spawnSync } = await import("node:child_process");
+
+                // Exit Ink's raw mode so the editor gets a clean terminal
+                if (process.stdin.isTTY) {
+                  process.stdin.setRawMode(false);
+                }
+                // Clear screen before handing off to editor
+                stdout?.write("\x1b[?1049h"); // switch to alternate screen buffer
+
+                const result = spawnSync(editor, [filePath], {
+                  stdio: "inherit",
+                  shell: true,
+                });
+
+                // Restore terminal for Ink
+                stdout?.write("\x1b[?1049l"); // switch back from alternate screen buffer
+                if (process.stdin.isTTY) {
+                  process.stdin.setRawMode(true);
+                  process.stdin.resume();
+                }
+
+                if (result.status !== 0) {
+                  log("WARN", "plan-mode", `Editor exited with status ${result.status}`);
+                }
+
+                // Re-read the file after editing
+                const { readFileSync } = await import("node:fs");
+                const updated = readFileSync(filePath, "utf-8");
+                planManagerRef.current.updatePlanContent(updated);
+                log("INFO", "plan-mode", `Plan updated after editor (${updated.length} chars)`);
+              }}
+            />
+          )}
+
+          {/* AskUserQuestion overlay — shown when agent calls ask_user_question tool */}
+          {pendingQuestions && (
+            <QuestionOverlay
+              questions={pendingQuestions.questions}
+              elicitation={pendingQuestions.elicitation}
+              onAccept={(answers) => {
+                const resolve = pendingQuestions.resolve;
+                setPendingQuestions(null);
+                const count = Object.keys(answers).length;
+                log("INFO", "ask-user-question", `User accepted ${count} answer(s)`);
+                trackQuestion({ event: "question_answered", questionCount: count, outcome: "accept" });
+                resolve({ action: "accept", answers });
+              }}
+              onDecline={() => {
+                const resolve = pendingQuestions.resolve;
+                setPendingQuestions(null);
+                log("INFO", "ask-user-question", "User declined questions");
+                trackQuestion({ event: "question_declined", questionCount: pendingQuestions.questions.length, outcome: "decline" });
+                resolve({ action: "decline", answers: {} });
+              }}
+              onCancel={() => {
+                const resolve = pendingQuestions.resolve;
+                setPendingQuestions(null);
+                log("INFO", "ask-user-question", "User cancelled questions");
+                trackQuestion({ event: "question_cancelled", questionCount: pendingQuestions.questions.length, outcome: "cancel" });
+                resolve({ action: "cancel", answers: {} });
+              }}
+              onClearContext={async (answers, planSummary) => {
+                const resolve = pendingQuestions.resolve;
+                setPendingQuestions(null);
+                log("INFO", "plan-mode", "Clear context: copying plan to clipboard and starting new session");
+
+                // Copy plan summary to clipboard
+                try {
+                  await copyToClipboard(planSummary);
+                  log("INFO", "clipboard", `Copied plan summary (${planSummary.length} chars)`);
+                } catch {
+                  // Clipboard copy is best-effort
+                  log("WARN", "clipboard", "Failed to copy plan summary to clipboard");
+                }
+
+                // Resolve the tool call with the accepted answers first
+                trackQuestion({ event: "question_answered", questionCount: Object.keys(answers).length, outcome: "accept" });
+                resolve({ action: "accept", answers });
+
+                // Clear the session (replicating /clear logic)
+                stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+                setHistory([{ kind: "banner", id: "banner" }]);
+                setLiveItems([]);
+                messagesRef.current = messagesRef.current.slice(0, 1); // keep system prompt
+                agentLoop.reset();
+
+                // Cancel plan mode if active
+                const pm = planManagerRef.current;
+                if (pm.state !== "idle") {
+                  pm.cancel();
+                }
+
+                // Inject plan context into new session and run
+                setLiveItems([
+                  { kind: "info", text: "🔄 New session with plan context (copied to clipboard)", id: getId() },
+                ]);
+                setDoneStatus(null);
+                try {
+                  await agentLoop.run(planSummary);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  log("ERROR", "error", msg);
+                  setLiveItems((prev) => [...prev, { kind: "error", message: msg, id: getId() }]);
+                }
+              }}
+            />
+          )}
+
           {/* Input + Footer */}
           <InputArea
             onSubmit={handleSubmit}
             onAbort={handleAbort}
-            disabled={agentLoop.isRunning}
-            isActive={!taskBarFocused}
+            disabled={agentLoop.isRunning || !!pendingQuestions}
+            isActive={!taskBarFocused && !pendingQuestions}
             onDownAtEnd={handleFocusTaskBar}
-            onShiftTab={handleToggleThinking}
+            onShiftTab={handleShiftTabCycle}
+            onTogglePlan={handleTogglePlan}
             onToggleTasks={() => {
               stdout?.write("\x1b[2J\x1b[3J\x1b[H");
               setOverlay("tasks");
@@ -1408,6 +1759,7 @@ export function App(props: AppProps) {
               cwd={props.cwd}
               gitBranch={gitBranch}
               thinkingEnabled={thinkingEnabled}
+              planModeActive={planModeState === "planning"}
             />
           )}
           {bgTasks.length > 0 && (

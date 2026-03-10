@@ -78,6 +78,53 @@ export class SlashCommandRegistry {
   }
 }
 
+// ── Embedded Command Extraction ─────────────────────────────
+
+export interface EmbeddedCommand {
+  /** The matched command name (without leading /) */
+  command: string;
+  /** Everything in the input except the /command token */
+  args: string;
+  /** The raw /command token that was matched */
+  raw: string;
+}
+
+/**
+ * Extract a prompt/custom command from anywhere in the input string.
+ * Only matches against the provided set of known command names — UI commands
+ * like /quit, /model, /compact are never matched inline.
+ *
+ * If the input starts with `/`, returns null so the existing start-of-line
+ * parsing takes priority.
+ *
+ * If multiple commands are found, the FIRST one wins.
+ */
+export function extractEmbedded(input: string, knownNames: Set<string>): EmbeddedCommand | null {
+  const trimmed = input.trim();
+
+  // If input starts with /, let the existing start-of-line parser handle it
+  if (trimmed.startsWith("/")) return null;
+
+  // Scan for /commandname tokens — word boundary before the slash ensures
+  // we don't match inside URLs like https://example.com/scan
+  const regex = /(?:^|\s)(\/([a-z][\w-]*))/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(trimmed)) !== null) {
+    const raw = match[1]; // "/scan"
+    const name = match[2].toLowerCase(); // "scan" — normalize to lowercase
+    if (knownNames.has(name)) {
+      // Remove the /command token from the input to get the remaining args
+      const args = trimmed
+        .replace(raw, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      return { command: name, args, raw };
+    }
+  }
+
+  return null;
+}
+
 // ── Built-in Commands ──────────────────────────────────────
 
 export function createBuiltinCommands(): SlashCommand[] {
