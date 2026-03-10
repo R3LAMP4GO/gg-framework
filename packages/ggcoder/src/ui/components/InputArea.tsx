@@ -115,23 +115,19 @@ export function InputArea({
     return () => clearInterval(timer);
   }, [disabled, borderPulseColors]);
 
-  // Cursor blink
+  // Cursor blink — always active so user can type while agent is busy
   const [cursorVisible, setCursorVisible] = useState(true);
   useEffect(() => {
-    if (disabled) {
-      setCursorVisible(true);
-      return;
-    }
     const timer = setInterval(() => {
       setCursorVisible((v) => !v);
     }, 530);
     return () => clearInterval(timer);
-  }, [disabled]);
+  }, []);
 
   // Auto-detect image paths as they're pasted/typed — debounce so full paste arrives
   const extractingRef = useRef(false);
   useEffect(() => {
-    if (disabled || !value || extractingRef.current) return;
+    if (!value || extractingRef.current) return;
     const timer = setTimeout(() => {
       extractingRef.current = true;
       extractImagePaths(value, cwd)
@@ -169,8 +165,10 @@ export function InputArea({
       if (disabled) {
         if ((key.ctrl && input === "c") || key.escape) {
           onAbort();
+          return;
         }
-        return;
+        // When disabled (agent running), allow typing but block submission
+        if (key.return) return;
       }
 
       if (key.return && (key.shift || key.meta)) {
@@ -416,7 +414,7 @@ export function InputArea({
           </Box>
         )}
         {displayLines.map((line, i) => {
-          const showCursor = !disabled && i === cursorDisplayLine;
+          const showCursor = i === cursorDisplayLine;
           const col = cursorLineInfo.col;
 
           // Calculate the absolute character offset where this display line starts
@@ -498,7 +496,7 @@ export function InputArea({
         })}
       </Box>
       {/* Slash command menu — shown below the input box */}
-      {isSlashMode && !disabled && filteredCommands.length > 0 && (
+      {isSlashMode && filteredCommands.length > 0 && (
         <SlashCommandMenu commands={commands} filter={slashFilter} selectedIndex={menuIndex} />
       )}
     </Box>
