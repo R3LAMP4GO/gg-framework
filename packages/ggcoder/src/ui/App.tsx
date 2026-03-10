@@ -1322,7 +1322,11 @@ export function App(props: AppProps) {
         items={isTaskView ? [] : history}
         style={{ width: "100%" }}
       >
-        {(item) => renderItem(item)}
+        {(item) => (
+          <Box key={item.id} flexDirection="column" paddingRight={1}>
+            {renderItem(item)}
+          </Box>
+        )}
       </Static>
 
       {isTaskView ? (
