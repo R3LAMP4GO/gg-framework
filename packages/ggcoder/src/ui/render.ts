@@ -4,7 +4,6 @@ import type { Message, Provider, ServerToolDefinition, ThinkingLevel } from "@ke
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
 import { App, type CompletedItem } from "./App.js";
-import { SplashScreen } from "./components/SplashScreen.js";
 import { ThemeContext, loadTheme } from "./theme/theme.js";
 
 export interface RenderAppConfig {
@@ -36,32 +35,8 @@ export interface RenderAppConfig {
 export async function renderApp(config: RenderAppConfig): Promise<void> {
   const theme = loadTheme(config.theme ?? "dark");
 
-  const isRestoredSession = config.initialHistory && config.initialHistory.length > 0;
-
   // Clear screen
   process.stdout.write("\x1b[2J\x1b[H");
-
-  // Show animated splash screen for new sessions only (skip for restored sessions)
-  if (!isRestoredSession) {
-    await new Promise<void>((resolve) => {
-      const { unmount } = render(
-        React.createElement(
-          ThemeContext.Provider,
-          { value: theme },
-          React.createElement(SplashScreen, {
-            version: config.version,
-            onDone: () => {
-              unmount();
-              resolve();
-            },
-          }),
-        ),
-      );
-    });
-
-    // Clear screen for the main app
-    process.stdout.write("\x1b[2J\x1b[H");
-  }
 
   const { waitUntilExit, clear } = render(
     React.createElement(
