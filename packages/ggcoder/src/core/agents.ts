@@ -14,7 +14,8 @@ export interface AgentDefinition {
   skills?: string[];
   permissionMode?: PermissionMode;
   systemPrompt: string;
-  source: "global" | "project";
+  source: "global" | "project" | "builtin";
+  filePath?: string;
 }
 
 /**
@@ -62,6 +63,7 @@ async function loadAgentsFromDir(
       if (!agent.name) {
         agent.name = path.basename(file, ".md");
       }
+      agent.filePath = filePath;
       agents.push(agent);
     } catch {
       // Skip unreadable files
@@ -134,4 +136,72 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
   }
 
   return { name, description, tools, disallowedTools, model, maxTurns, background, skills, permissionMode, systemPrompt, source };
+}
+
+// ── Write operations ──────────────────────────────────────
+
+/**
+ * Serialize an agent definition into frontmatter + markdown content.
+ */
+function serializeAgent(agent: AgentDefinition): string {
+  const lines: string[] = ["---"];
+  if (agent.name) lines.push(`name: ${agent.name}`);
+  if (agent.description) lines.push(`description: ${agent.description}`);
+  if (agent.tools.length > 0) lines.push(`tools: ${agent.tools.join(", ")}`);
+  if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+    lines.push(`disallowed-tools: ${agent.disallowedTools.join(", ")}`);
+  }
+  if (agent.model) lines.push(`model: ${agent.model}`);
+  if (agent.maxTurns) lines.push(`max-turns: ${agent.maxTurns}`);
+  if (agent.background) lines.push(`background: true`);
+  if (agent.skills && agent.skills.length > 0) {
+    lines.push(`skills: ${agent.skills.join(", ")}`);
+  }
+  if (agent.permissionMode) lines.push(`permission-mode: ${agent.permissionMode}`);
+  lines.push("---");
+  lines.push("");
+  lines.push(agent.systemPrompt);
+  return lines.join("\n") + "\n";
+}
+
+/** Write an agent definition to a .md file. */
+export async function saveAgentFile(filePath: string, agent: AgentDefinition): Promise<void> {
+  await fs.writeFile(filePath, serializeAgent(agent), "utf-8");
+}
+
+/** Delete an agent .md file. */
+export async function deleteAgentFile(filePath: string): Promise<void> {
+  await fs.unlink(filePath);
+}
+
+/** Create a new agent .md file with a default template. Returns the file path. */
+export async function createAgentFile(agentsDir: string, name: string): Promise<string> {
+  await fs.mkdir(agentsDir, { recursive: true });
+  const filePath = path.join(agentsDir, `${name}.md`);
+  const template: AgentDefinition = {
+    name,
+    description: "",
+    tools: [],
+    model: "inherit",
+    systemPrompt: `You are ${name}. Describe your role and capabilities here.`,
+    source: "global",
+  };
+  await saveAgentFile(filePath, template);
+  return filePath;
+}
+
+/** Update only the model field in an agent file's frontmatter. */
+export async function updateAgentModel(filePath: string, model: string): Promise<void> {
+  const content = await fs.readFile(filePath, "utf-8");
+  const agent = parseAgentFile(content, "global");
+  agent.model = model;
+  await saveAgentFile(filePath, agent);
+}
+
+/** Update only the tools field in an agent file's frontmatter. */
+export async function updateAgentTools(filePath: string, tools: string[]): Promise<void> {
+  const content = await fs.readFile(filePath, "utf-8");
+  const agent = parseAgentFile(content, "global");
+  agent.tools = tools;
+  await saveAgentFile(filePath, agent);
 }

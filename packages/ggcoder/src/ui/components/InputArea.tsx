@@ -449,6 +449,11 @@ export function InputArea({
       }
 
       if (key.escape) {
+        // When the agent is running, ESC aborts it
+        if (isAgentRunning) {
+          onAbort();
+          return;
+        }
         if (selectedImageIndex !== null) {
           setSelectedImageIndex(null);
           return;

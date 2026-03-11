@@ -183,7 +183,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     model: "haiku", // Resolved at spawn time via resolveAgentModel()
     maxTurns: 10,
     systemPrompt: EXPLORE_SYSTEM_PROMPT,
-    source: "global",
+    source: "builtin",
   },
   {
     name: "plan",
@@ -197,7 +197,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     maxTurns: 15,
     permissionMode: "plan",
     systemPrompt: PLAN_SYSTEM_PROMPT,
-    source: "global",
+    source: "builtin",
   },
   {
     name: "worker",
@@ -210,7 +210,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     model: "inherit", // Inherits from parent
     maxTurns: 30,
     systemPrompt: WORKER_SYSTEM_PROMPT,
-    source: "global",
+    source: "builtin",
   },
   {
     name: "fork",
@@ -222,7 +222,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     model: "inherit", // Inherits from parent
     maxTurns: 200,
     systemPrompt: WORKER_FORK_SYSTEM_PROMPT,
-    source: "global",
+    source: "builtin",
   },
 ];
 

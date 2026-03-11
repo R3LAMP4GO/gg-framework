@@ -283,7 +283,7 @@ export function createBuiltinCommands(): SlashCommand[] {
 
         const groups: Record<string, typeof agents> = {};
         for (const a of agents) {
-          const label = a.source === "global" ? "Built-in / User (~/.gg/agents/)" : "Project (.gg/agents/)";
+          const label = a.source === "builtin" ? "Built-in" : a.source === "global" ? "User (~/.gg/agents/)" : "Project (.gg/agents/)";
           (groups[label] ??= []).push(a);
         }
 

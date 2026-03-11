@@ -620,8 +620,10 @@ export function QuestionOverlay({
             )}
           </Box>
 
-          {/* Separator */}
-          <Box marginTop={1} />
+          {/* Divider between options and meta-actions */}
+          <Box marginTop={1} marginBottom={1}>
+            <Text color={theme.textDim}>{"─".repeat(40)}</Text>
+          </Box>
 
           {/* "Chat about this" */}
           <Box>

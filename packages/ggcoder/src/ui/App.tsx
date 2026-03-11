@@ -26,6 +26,10 @@ import { Footer } from "./components/Footer.js";
 import { Banner } from "./components/Banner.js";
 import { ModelSelector } from "./components/ModelSelector.js";
 import { TaskOverlay } from "./components/TaskOverlay.js";
+import { AgentsOverlay } from "./components/AgentsOverlay.js";
+import { BUILTIN_AGENTS } from "../core/builtin-agents.js";
+import { discoverAgents } from "../core/agents.js";
+import { getAppPaths } from "../config.js";
 import { BackgroundTasksBar } from "./components/BackgroundTasksBar.js";
 import type { SlashCommandInfo } from "./components/SlashCommandMenu.js";
 import type { ProcessManager, BackgroundProcess } from "../core/process-manager.js";
@@ -397,7 +401,8 @@ export function App(props: AppProps) {
   }, [isRestoredSession, props.initialHistory]);
   // Items from the current/last turn — rendered in the live area so they stay visible
   const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
-  const [overlay, setOverlay] = useState<"model" | "tasks" | null>(null);
+  const [overlay, setOverlay] = useState<"model" | "tasks" | "agents" | null>(null);
+  const [agentsList, setAgentsList] = useState<AgentDefinition[]>(props.agents ?? []);
   const [taskCount, setTaskCount] = useState(() => getTaskCount(props.cwd));
   const [runAllTasks, setRunAllTasks] = useState(false);
   const runAllTasksRef = useRef(false);
@@ -1104,23 +1109,10 @@ export function App(props: AppProps) {
         return;
       }
 
-      // Handle /agents — list available sub-agents
+      // Handle /agents — open interactive agents overlay
       if (trimmed === "/agents") {
-        const agentList = props.agents ?? [];
-        if (agentList.length === 0) {
-          setLiveItems((prev) => [
-            ...prev,
-            { kind: "info", text: "No agents available.", id: getId() },
-          ]);
-        } else {
-          const lines = agentList.map(
-            (a) => `  ${a.name} — ${a.description}${a.source === "project" ? " (project)" : a.source === "global" ? " (global)" : ""}`,
-          );
-          setLiveItems((prev) => [
-            ...prev,
-            { kind: "info", text: `Available agents (${agentList.length}):\n${lines.join("\n")}`, id: getId() },
-          ]);
-        }
+        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+        setOverlay("agents");
         return;
       }
 
@@ -1604,7 +1596,6 @@ export function App(props: AppProps) {
       { name: "clear", aliases: [], description: "Clear session and terminal" },
       { name: "copy", aliases: [], description: "Copy last response to clipboard" },
       { name: "plan", aliases: [], description: "Toggle plan mode (read-only exploration)" },
-      { name: "agents", aliases: [], description: "List available sub-agents" },
       { name: "quit", aliases: ["q", "exit"], description: "Exit the agent" },
       // Built-in prompt commands, excluding any overridden by custom commands
       ...PROMPT_COMMANDS.filter((cmd) => !customNames.has(cmd.name)).map((cmd) => ({
@@ -1808,14 +1799,14 @@ export function App(props: AppProps) {
     runAllTasksRef.current = runAllTasks;
   }, [runAllTasks]);
 
-  const isTaskView = overlay === "tasks";
+  const isFullscreenOverlay = overlay === "tasks" || overlay === "agents";
 
   return (
     <Box flexDirection="column">
       {/* History — scrolled up, managed by Ink Static. */}
       <Static
         key={`${resizeKey}-${staticKey}`}
-        items={isTaskView ? [] : history}
+        items={isFullscreenOverlay ? [] : history}
         style={{ width: "100%" }}
       >
         {(item) => (
@@ -1825,7 +1816,44 @@ export function App(props: AppProps) {
         )}
       </Static>
 
-      {isTaskView ? (
+      {overlay === "agents" ? (
+        <AgentsOverlay
+          agents={agentsList}
+          builtinAgents={BUILTIN_AGENTS}
+          agentsDir={getAppPaths().agentsDir}
+          cwd={props.cwd}
+          onClose={() => {
+            stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+            setStaticKey((k) => k + 1);
+            setOverlay(null);
+          }}
+          onAgentsChanged={() => {
+            void discoverAgents({
+              globalAgentsDir: getAppPaths().agentsDir,
+              projectDir: props.cwd,
+            }).then((newAgents) => {
+              setAgentsList(newAgents);
+            });
+          }}
+          onOpenEditor={async (filePath: string) => {
+            const editor = process.env.VISUAL || process.env.EDITOR || "vi";
+            const { spawnSync } = await import("node:child_process");
+            if (process.stdin.isTTY) {
+              process.stdin.setRawMode(false);
+            }
+            stdout?.write("\x1b[?1049h");
+            spawnSync(editor, [filePath], {
+              stdio: "inherit",
+              shell: true,
+            });
+            stdout?.write("\x1b[?1049l");
+            if (process.stdin.isTTY) {
+              process.stdin.setRawMode(true);
+              process.stdin.resume();
+            }
+          }}
+        />
+      ) : overlay === "tasks" ? (
         <TaskOverlay
           cwd={props.cwd}
           agentRunning={agentLoop.isRunning}
