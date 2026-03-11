@@ -253,8 +253,24 @@ export function toAnthropicThinking(
 
 // ── OpenAI Transforms ──────────────────────────────────────
 
+/**
+ * Remap tool call IDs that don't match OpenAI's expected prefix.
+ * Anthropic uses `toolu_*` IDs which OpenAI rejects — we need `call_*` prefixed IDs.
+ * The mapping is consistent within a single conversion so assistant tool_call IDs
+ * match their corresponding tool result references.
+ */
+function remapToolCallId(id: string, idMap: Map<string, string>): string {
+  if (id.startsWith("call_")) return id;
+  const existing = idMap.get(id);
+  if (existing) return existing;
+  const mapped = `call_${id.replace(/^toolu_/, "")}`;
+  idMap.set(id, mapped);
+  return mapped;
+}
+
 export function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMessageParam[] {
   const out: OpenAI.ChatCompletionMessageParam[] = [];
+  const idMap = new Map<string, string>();
 
   for (const msg of messages) {
     if (msg.role === "system") {
@@ -294,7 +310,7 @@ export function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMess
               )
               .map(
                 (tc): OpenAI.ChatCompletionMessageToolCall => ({
-                  id: tc.id,
+                  id: remapToolCallId(tc.id, idMap),
                   type: "function",
                   function: { name: tc.name, arguments: JSON.stringify(tc.args) },
                 }),
@@ -337,7 +353,7 @@ export function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMess
         // images are dropped (they're primarily for Anthropic's multimodal tool results)
         out.push({
           role: "tool",
-          tool_call_id: result.toolCallId,
+          tool_call_id: remapToolCallId(result.toolCallId, idMap),
           content: result.images?.length
             ? `${result.content}\n\n[${result.images.length} image(s) attached — visible in Anthropic provider only]`
             : result.content,
