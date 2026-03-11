@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
 import type { Skill } from "../core/skills.js";
-import { getExploreModel, applyCommonSuffix } from "../core/builtin-agents.js";
+import { resolveAgentModel, applyCommonSuffix } from "../core/builtin-agents.js";
 import { truncateTail } from "./truncate.js";
 
 const SUB_AGENT_MAX_TURNS = 10;
@@ -119,11 +119,8 @@ export function createSubAgentTool(
         }
       }
 
-      // Resolve model — explore agent gets cheapest model
-      let useModel = agentDef?.model ?? parentModel;
-      if (agentDef?.name === "explore" && !agentDef.model) {
-        useModel = getExploreModel(parentProvider, parentModel);
-      }
+      // Resolve model — agents can specify "haiku", "sonnet", "inherit", or a specific model ID
+      const useModel = resolveAgentModel(agentDef?.model, parentProvider, parentModel);
       const useProvider = parentProvider;
 
       // Build the system prompt:
