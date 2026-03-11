@@ -6,19 +6,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { playNotificationSound } from "../utils/sound.js";
-import type {
-  Message,
-  Provider,
-  ServerToolDefinition,
-  ThinkingLevel,
-  TextContent,
-  ImageContent,
-} from "@kenkaiiii/gg-ai";
+import type { Message, Provider, ThinkingLevel, TextContent, ImageContent } from "@kenkaiiii/gg-ai";
 import { extractImagePaths, type ImageAttachment } from "../utils/image.js";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
 import { useAgentLoop, type ActivityPhase } from "./hooks/useAgentLoop.js";
 import { UserMessage } from "./components/UserMessage.js";
+import type { PasteInfo } from "./components/InputArea.js";
 import { AssistantMessage } from "./components/AssistantMessage.js";
 import { ToolExecution } from "./components/ToolExecution.js";
 import { ServerToolExecution } from "./components/ServerToolExecution.js";
@@ -47,6 +41,8 @@ import { estimateConversationTokens } from "../core/compaction/token-estimator.j
 import { PROMPT_COMMANDS, getPromptCommand } from "../core/prompt-commands.js";
 import { loadCustomCommands, type CustomCommand } from "../core/custom-commands.js";
 import { extractEmbedded, parseBashPrefix, extractFileMentions } from "../core/slash-commands.js";
+import type { MCPClientManager } from "../core/mcp/index.js";
+import { getMCPServers } from "../core/mcp/index.js";
 import { pruneHistory, flushOnTurnText, flushOnTurnEnd } from "./live-item-flush.js";
 import {
   createPlanModeManager,
@@ -60,12 +56,43 @@ import type { Question, QuestionResult, ElicitationRequest } from "../tools/ask-
 import { trackQuestion } from "../core/telemetry.js";
 import { copyToClipboard } from "../utils/clipboard.js";
 
+// ── Provider Error Hints ──────────────────────────────────
+
+/** Detect provider-side errors and return a user-facing hint. */
+function getProviderErrorHint(message: string): string | null {
+  const lower = message.toLowerCase();
+  if (lower.includes("overloaded") || lower.includes("engine_overloaded")) {
+    return "This is a provider-side issue — their servers are under heavy load. Try again in a moment.";
+  }
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429")
+  ) {
+    return "You've hit the provider's rate limit. Wait a moment before retrying.";
+  }
+  if (lower.includes("502") || lower.includes("bad gateway")) {
+    return "The provider returned a server error. This is not a ggcoder issue — try again shortly.";
+  }
+  if (lower.includes("503") || lower.includes("service unavailable")) {
+    return "The provider's service is temporarily unavailable. Try again in a moment.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "The request to the provider timed out. Their servers may be slow — try again.";
+  }
+  if (lower.includes("500") && lower.includes("internal server error")) {
+    return "The provider experienced an internal error. This is not a ggcoder issue.";
+  }
+  return null;
+}
+
 // ── Completed Item Types ───────────────────────────────────
 
 interface UserItem {
   kind: "user";
   text: string;
   imageCount?: number;
+  pasteInfo?: PasteInfo;
   id: string;
 }
 
@@ -152,6 +179,7 @@ interface ServerToolStartItem {
   serverToolCallId: string;
   name: string;
   input: unknown;
+  startedAt: number;
   id: string;
 }
 
@@ -161,6 +189,7 @@ interface ServerToolDoneItem {
   input: unknown;
   resultType: string;
   data: unknown;
+  durationMs: number;
   id: string;
 }
 
@@ -311,7 +340,7 @@ export interface AppProps {
   provider: Provider;
   model: string;
   tools: AgentTool[];
-  serverTools?: ServerToolDefinition[];
+  webSearch?: boolean;
   messages: Message[];
   maxTokens: number;
   thinking?: ThinkingLevel;
@@ -332,6 +361,7 @@ export interface AppProps {
   planModeManager?: PlanModeManager;
   agents?: AgentDefinition[];
   settingsFile?: string;
+  mcpManager?: MCPClientManager;
 }
 
 // ── App Component ──────────────────────────────────────────
@@ -381,6 +411,7 @@ export function App(props: AppProps) {
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [currentModel, setCurrentModel] = useState(props.model);
   const [currentProvider, setCurrentProvider] = useState(props.provider);
+  const [currentTools, setCurrentTools] = useState(props.tools);
   const [thinkingEnabled, setThinkingEnabled] = useState(!!props.thinking);
 
   // ── Plan mode ──────────────────────────────────────────
@@ -644,8 +675,8 @@ export function App(props: AppProps) {
     {
       provider: currentProvider,
       model: currentModel,
-      tools: props.tools,
-      serverTools: props.serverTools,
+      tools: currentTools,
+      webSearch: props.webSearch,
       maxTokens: props.maxTokens,
       thinking: thinkingEnabled ? (props.thinking ?? "medium") : undefined,
       apiKey: activeApiKey,
@@ -799,7 +830,14 @@ export function App(props: AppProps) {
         log("INFO", "server_tool", `Server tool call: ${name}`, { id });
         setLiveItems((prev) => [
           ...prev,
-          { kind: "server_tool_start", serverToolCallId: id, name, input, id: getId() },
+          {
+            kind: "server_tool_start",
+            serverToolCallId: id,
+            name,
+            input,
+            startedAt: Date.now(),
+            id: getId(),
+          },
         ]);
       }, []),
       onServerToolResult: useCallback((toolUseId: string, resultType: string, data: unknown) => {
@@ -816,6 +854,7 @@ export function App(props: AppProps) {
               input: startItem.input,
               resultType,
               data,
+              durationMs: Date.now() - startItem.startedAt,
               id: startItem.id,
             };
             const next = [...prev];
@@ -824,7 +863,15 @@ export function App(props: AppProps) {
           }
           return [
             ...prev,
-            { kind: "server_tool_done", name: "unknown", input: {}, resultType, data, id: getId() },
+            {
+              kind: "server_tool_done",
+              name: "unknown",
+              input: {},
+              resultType,
+              data,
+              durationMs: 0,
+              id: getId(),
+            },
           ];
         });
       }, []),
@@ -950,7 +997,7 @@ export function App(props: AppProps) {
   }, [doneStatus]);
 
   const handleSubmit = useCallback(
-    async (input: string, inputImages: ImageAttachment[] = []) => {
+    async (input: string, inputImages: ImageAttachment[] = [], pasteInfo?: PasteInfo) => {
       const trimmed = input.trim();
 
       if (trimmed.startsWith("/")) {
@@ -1319,6 +1366,7 @@ export function App(props: AppProps) {
         kind: "user",
         text: displayText,
         imageCount: hasImages ? inputImages.length : undefined,
+        pasteInfo,
         id: getId(),
       };
       setLastUserMessage(input);
@@ -1326,6 +1374,8 @@ export function App(props: AppProps) {
       setLiveItems([userItem]);
 
       // Build user content — plain string or content array with images
+      const modelInfo = getModel(currentModel);
+      const modelSupportsImages = modelInfo?.supportsImages ?? true;
       let userContent: string | (TextContent | ImageContent)[];
       if (hasImages) {
         const parts: (TextContent | ImageContent)[] = [];
@@ -1333,9 +1383,33 @@ export function App(props: AppProps) {
           parts.push({ type: "text", text: trimmed });
         }
         for (const img of inputImages) {
-          parts.push({ type: "image", mediaType: img.mediaType, data: img.data });
+          if (img.kind === "text") {
+            parts.push({
+              type: "text",
+              text: `<file name="${img.fileName}">\n${img.data}\n</file>`,
+            });
+          } else if (modelSupportsImages) {
+            parts.push({ type: "image", mediaType: img.mediaType, data: img.data });
+          } else {
+            // GLM models: save image to temp file and instruct model to use vision MCP tool
+            const ext = img.mediaType.split("/")[1] ?? "png";
+            const tmpPath = `/tmp/ggcoder-img-${Date.now()}.${ext}`;
+            try {
+              writeFileSync(tmpPath, Buffer.from(img.data, "base64"));
+              parts.push({
+                type: "text",
+                text: `[User attached an image saved at: ${tmpPath} — use the image_analysis tool to view and analyze it]`,
+              });
+            } catch {
+              parts.push({
+                type: "text",
+                text: `[User attached an image but it could not be saved for analysis]`,
+              });
+            }
+          }
         }
-        userContent = parts;
+        // If only text parts remain after stripping images, simplify to plain string
+        userContent = parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts;
       } else {
         userContent = fileContext ? input + fileContext : input;
       }
@@ -1437,7 +1511,42 @@ export function App(props: AppProps) {
       const newProvider = value.slice(0, colonIdx) as Provider;
       const newModelId = value.slice(colonIdx + 1);
       log("INFO", "model", `Model changed`, { provider: newProvider, model: newModelId });
-      setCurrentProvider(newProvider);
+
+      // Reconnect MCP servers when provider changes
+      setCurrentProvider((prevProvider) => {
+        if (newProvider !== prevProvider && props.mcpManager) {
+          void (async () => {
+            // Disconnect old MCP servers
+            await props.mcpManager!.dispose();
+
+            // Remove old MCP tools, connect new ones
+            let apiKey: string | undefined;
+            if (newProvider === "glm") {
+              apiKey = props.credentialsByProvider?.["glm"]?.accessToken;
+            }
+            try {
+              const mcpTools = await props.mcpManager!.connectAll(
+                getMCPServers(newProvider, apiKey),
+              );
+              setCurrentTools((prev) => [
+                ...prev.filter((t) => !t.name.startsWith("mcp__")),
+                ...mcpTools,
+              ]);
+              log("INFO", "mcp", `MCP servers reconnected for provider ${newProvider}`);
+            } catch (err) {
+              log(
+                "WARN",
+                "mcp",
+                `MCP reconnection failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              // Still remove old MCP tools even if reconnection fails
+              setCurrentTools((prev) => prev.filter((t) => !t.name.startsWith("mcp__")));
+            }
+          })();
+        }
+        return newProvider;
+      });
+
       setCurrentModel(newModelId);
       const modelInfo = getModel(newModelId);
       const displayName = modelInfo?.name ?? newModelId;
@@ -1455,7 +1564,7 @@ export function App(props: AppProps) {
         });
       }
     },
-    [props.settingsFile],
+    [props.settingsFile, props.mcpManager, props.credentialsByProvider],
   );
 
   // All available slash commands for the command palette
@@ -1501,7 +1610,14 @@ export function App(props: AppProps) {
           />
         );
       case "user":
-        return <UserMessage key={item.id} text={item.text} imageCount={item.imageCount} />;
+        return (
+          <UserMessage
+            key={item.id}
+            text={item.text}
+            imageCount={item.imageCount}
+            pasteInfo={item.pasteInfo}
+          />
+        );
       case "task":
         return (
           <Box key={item.id} marginTop={1}>
@@ -1539,7 +1655,13 @@ export function App(props: AppProps) {
         );
       case "server_tool_start":
         return (
-          <ServerToolExecution key={item.id} status="running" name={item.name} input={item.input} />
+          <ServerToolExecution
+            key={item.id}
+            status="running"
+            name={item.name}
+            input={item.input}
+            startedAt={item.startedAt}
+          />
         );
       case "server_tool_done":
         return (
@@ -1548,17 +1670,26 @@ export function App(props: AppProps) {
             status="done"
             name={item.name}
             input={item.input}
-            resultType={item.resultType}
-            data={item.data}
+            durationMs={item.durationMs}
           />
         );
-      case "error":
+      case "error": {
+        const providerHint = getProviderErrorHint(item.message);
         return (
-          <Box key={item.id} marginTop={1}>
-            <Text color={theme.error}>{"✗ "}</Text>
-            <Text color={theme.error}>{item.message}</Text>
+          <Box key={item.id} marginTop={1} flexDirection="column">
+            <Text color={theme.error}>
+              {"✗ "}
+              {item.message}
+            </Text>
+            {providerHint && (
+              <Text color={theme.textDim}>
+                {"  Hint: "}
+                {providerHint}
+              </Text>
+            )}
           </Box>
         );
+      }
       case "info":
         return (
           <Box key={item.id} marginTop={1}>
@@ -1659,7 +1790,11 @@ export function App(props: AppProps) {
         items={isTaskView ? [] : history}
         style={{ width: "100%" }}
       >
-        {(item) => renderItem(item)}
+        {(item) => (
+          <Box key={item.id} flexDirection="column" paddingRight={1}>
+            {renderItem(item)}
+          </Box>
+        )}
       </Static>
 
       {isTaskView ? (
@@ -1864,7 +1999,7 @@ export function App(props: AppProps) {
             onAbort={handleAbort}
             disabled={!!pendingQuestions}
             isAgentRunning={agentLoop.isRunning}
-            isActive={!taskBarFocused && !pendingQuestions}
+            isActive={!taskBarFocused && !pendingQuestions && !overlay}
             onDownAtEnd={handleFocusTaskBar}
             onShiftTab={handleShiftTabCycle}
             onTogglePlan={handleTogglePlan}

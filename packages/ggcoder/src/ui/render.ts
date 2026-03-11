@@ -6,15 +6,15 @@ import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
 import type { PlanModeManager } from "../core/plan-mode.js";
 import type { AgentDefinition } from "../core/agents.js";
+import type { MCPClientManager } from "../core/mcp/index.js";
 import { App, type CompletedItem } from "./App.js";
-import { SplashScreen } from "./components/SplashScreen.js";
 import { ThemeContext, loadTheme } from "./theme/theme.js";
 
 export interface RenderAppConfig {
   provider: Provider;
   model: string;
   tools: AgentTool[];
-  serverTools?: ServerToolDefinition[];
+  webSearch?: boolean;
   messages: Message[];
   maxTokens: number;
   thinking?: ThinkingLevel;
@@ -36,37 +36,14 @@ export interface RenderAppConfig {
   planModeManager?: PlanModeManager;
   agents?: AgentDefinition[];
   settingsFile?: string;
+  mcpManager?: MCPClientManager;
 }
 
 export async function renderApp(config: RenderAppConfig): Promise<void> {
   const theme = loadTheme(config.theme ?? "dark");
 
-  const isRestoredSession = config.initialHistory && config.initialHistory.length > 0;
-
   // Clear screen
   process.stdout.write("\x1b[2J\x1b[H");
-
-  // Show animated splash screen for new sessions only (skip for restored sessions)
-  if (!isRestoredSession) {
-    await new Promise<void>((resolve) => {
-      const { unmount } = render(
-        React.createElement(
-          ThemeContext.Provider,
-          { value: theme },
-          React.createElement(SplashScreen, {
-            version: config.version,
-            onDone: () => {
-              unmount();
-              resolve();
-            },
-          }),
-        ),
-      );
-    });
-
-    // Clear screen for the main app
-    process.stdout.write("\x1b[2J\x1b[H");
-  }
 
   const { waitUntilExit, clear } = render(
     React.createElement(
@@ -76,7 +53,7 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
         provider: config.provider,
         model: config.model,
         tools: config.tools,
-        serverTools: config.serverTools,
+        webSearch: config.webSearch,
         messages: config.messages,
         maxTokens: config.maxTokens,
         thinking: config.thinking,
@@ -97,6 +74,7 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
         planModeManager: config.planModeManager,
         agents: config.agents,
         settingsFile: config.settingsFile,
+        mcpManager: config.mcpManager,
       }),
     ),
     {

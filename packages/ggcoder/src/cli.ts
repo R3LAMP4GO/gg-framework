@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+// Drain performance entries to prevent buffer overflow warning from dependencies
+import { PerformanceObserver } from "node:perf_hooks";
+new PerformanceObserver(() => {}).observe({ entryTypes: ["measure", "mark"] });
+
 import { parseArgs } from "node:util";
 import fs from "node:fs";
 import readline from "node:readline/promises";
@@ -18,7 +22,7 @@ import { ensureAppDirs, getAppPaths } from "./config.js";
 import { initLogger, log, closeLogger } from "./core/logger.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { createTools } from "./tools/index.js";
-import { MCPClientManager, DEFAULT_MCP_SERVERS } from "./core/mcp/index.js";
+import { MCPClientManager, getMCPServers } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
 import { BUILTIN_AGENTS } from "./core/builtin-agents.js";
 import { discoverSkills } from "./core/skills.js";
@@ -325,7 +329,9 @@ async function runInkTUI(opts: {
   // Connect MCP servers
   const mcpManager = new MCPClientManager();
   try {
-    const mcpTools = await mcpManager.connectAll(DEFAULT_MCP_SERVERS);
+    const providerApiKey =
+      provider === "glm" ? credentialsByProvider["glm"]?.accessToken : undefined;
+    const mcpTools = await mcpManager.connectAll(getMCPServers(provider, providerApiKey));
     tools.push(...mcpTools);
   } catch (err) {
     log(
@@ -384,15 +390,11 @@ async function runInkTUI(opts: {
     log("INFO", "session", `New session created`, { path: sessionPath });
   }
 
-  // Server-side tools (Anthropic only)
-  const serverTools =
-    provider === "anthropic" ? [{ type: "web_search_20250305", name: "web_search" }] : undefined;
-
   await renderApp({
     provider,
     model,
     tools,
-    serverTools,
+    webSearch: true,
     messages,
     version: CLI_VERSION,
     maxTokens: 16384,
@@ -410,6 +412,7 @@ async function runInkTUI(opts: {
     planModeManager,
     agents,
     settingsFile: paths.settingsFile,
+    mcpManager,
   });
 
   closeLogger();

@@ -14,8 +14,14 @@ import { SlashCommandMenu, filterCommands, type SlashCommandInfo } from "./Slash
 const MAX_VISIBLE_LINES = 5;
 const PROMPT = "❯ ";
 
+export interface PasteInfo {
+  offset: number; // char index where paste starts in value
+  length: number; // char length of pasted content
+  lineCount: number; // number of lines in pasted content
+}
+
 interface InputAreaProps {
-  onSubmit: (value: string, images: ImageAttachment[]) => void;
+  onSubmit: (value: string, images: ImageAttachment[], paste?: PasteInfo) => void;
   onAbort: () => void;
   disabled?: boolean;
   /** When true, input stays typeable but submissions are queued */
@@ -102,6 +108,9 @@ export function InputArea({
   const { stdout } = useStdout();
   const columns = stdout?.columns ?? 80;
   const [menuIndex, setMenuIndex] = useState(0);
+  const [pasteText, setPasteText] = useState(""); // accumulated pasted content
+  const [pasteOffset, setPasteOffset] = useState(0); // where in value the paste starts
+  const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Detect if we're in slash command mode
   const isSlashMode = value.startsWith("/") && !value.includes(" ") && commands.length > 0;
@@ -130,18 +139,14 @@ export function InputArea({
     return () => clearInterval(timer);
   }, [disabled, borderPulseColors]);
 
-  // Cursor blink
+  // Cursor blink — always active so user can type while agent is busy
   const [cursorVisible, setCursorVisible] = useState(true);
   useEffect(() => {
-    if (disabled) {
-      setCursorVisible(true);
-      return;
-    }
     const timer = setInterval(() => {
       setCursorVisible((v) => !v);
     }, 530);
     return () => clearInterval(timer);
-  }, [disabled]);
+  }, []);
 
   // Auto-clear image status message after 3 seconds
   useEffect(() => {
@@ -153,7 +158,7 @@ export function InputArea({
   // Auto-detect image paths as they're pasted/typed — debounce so full paste arrives
   const extractingRef = useRef(false);
   useEffect(() => {
-    if (disabled || !value || extractingRef.current) return;
+    if (!value || extractingRef.current) return;
     const timer = setTimeout(() => {
       extractingRef.current = true;
       extractImagePaths(value, cwd)
@@ -191,8 +196,10 @@ export function InputArea({
       if (disabled) {
         if ((key.ctrl && input === "c") || key.escape) {
           onAbort();
+          return;
         }
-        return;
+        // When disabled (agent running), allow typing but block submission
+        if (key.return) return;
       }
 
       if (key.return && (key.shift || key.meta)) {
@@ -214,6 +221,7 @@ export function InputArea({
           setCursor(0);
           setImages([]);
           setSelectedImageIndex(null);
+          setPasteText("");
           return;
         }
 
@@ -223,11 +231,22 @@ export function InputArea({
             historyRef.current.push({ text: trimmed, images: [...images] });
           }
           historyIndexRef.current = -1;
-          onSubmit(trimmed, [...images]);
+          // Compute paste info adjusted for trimming
+          const trimLeading = value.length - value.trimStart().length;
+          const paste: PasteInfo | undefined =
+            pasteText && pasteText.includes("\n")
+              ? {
+                  offset: Math.max(0, pasteOffset - trimLeading),
+                  length: pasteText.length,
+                  lineCount: pasteText.split("\n").length,
+                }
+              : undefined;
+          onSubmit(trimmed, [...images], paste);
           setValue("");
           setCursor(0);
           setImages([]);
           setSelectedImageIndex(null);
+          setPasteText("");
         }
         return;
       }
@@ -291,9 +310,11 @@ export function InputArea({
       }
 
       if (key.ctrl && input === "c") {
-        if (value) {
+        if (value || images.length > 0) {
           setValue("");
           setCursor(0);
+          setImages([]);
+          setPasteText("");
         } else {
           onAbort();
         }
@@ -325,6 +346,8 @@ export function InputArea({
         if (cursor > 0) {
           setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor));
           setCursor((c) => c - 1);
+        } else if (!value && images.length > 0) {
+          setImages((prev) => prev.slice(0, -1));
         }
         return;
       }
@@ -398,9 +421,11 @@ export function InputArea({
           return;
         }
         const now = Date.now();
-        if (value && now - lastEscRef.current < 400) {
+        if ((value || images.length > 0) && now - lastEscRef.current < 400) {
           setValue("");
           setCursor(0);
+          setImages([]);
+          setPasteText("");
         }
         lastEscRef.current = now;
         return;
@@ -444,8 +469,25 @@ export function InputArea({
 
       if (input) {
         setSelectedImageIndex(null);
-        setValue((v) => v.slice(0, cursor) + input + v.slice(cursor));
-        setCursor((c) => c + input.length);
+        const normalized = input.replace(/\r\n?/g, "\n");
+        setValue((v) => v.slice(0, cursor) + normalized + v.slice(cursor));
+        setCursor((c) => c + normalized.length);
+
+        // Detect paste: Ink delivers pasted text as input.length > 1
+        // For large pastes, Ink may split into multiple chunks, so we
+        // accumulate and debounce to capture the full paste.
+        if (input.length > 1) {
+          setPasteText((prev) => {
+            if (!prev) setPasteOffset(cursor); // record where paste starts on first chunk
+            return prev + normalized;
+          });
+          if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current);
+          pasteTimerRef.current = setTimeout(() => {
+            // After 100ms of quiet, finalize: only keep paste state if it had newlines
+            setPasteText((p) => (p.includes("\n") ? p : ""));
+            pasteTimerRef.current = null;
+          }, 100);
+        }
       }
     },
     { isActive },
@@ -547,7 +589,7 @@ export function InputArea({
       >
         {images.length > 0 && (
           <Box>
-            {images.map((_, i) => (
+            {images.map((img, i) => (
               <Text
                 key={i}
                 color={i === selectedImageIndex ? theme.text : theme.accent}
@@ -556,7 +598,7 @@ export function InputArea({
                 underline={i !== selectedImageIndex}
               >
                 {i > 0 ? " " : ""}
-                {`[Image #${i + 1}]`}
+                {img.kind === "text" ? `[File: ${img.fileName}]` : `[Image #${i + 1}]`}
               </Text>
             ))}
             {selectedImageIndex === null ? (
@@ -569,104 +611,118 @@ export function InputArea({
             )}
           </Box>
         )}
-        {displayLines.map((line, i) => {
-          const showCursor = !disabled && i === cursorDisplayLine;
-          const col = cursorLineInfo.col;
+        {(() => {
+          if (pasteText && value) {
+            const pasteLineCount = pasteText.split("\n").length;
+            const indicator = `[Pasted text #${pasteText.length} +${pasteLineCount} lines]`;
+            const pasteLen = pasteText.length;
+            const typedBefore = value.slice(0, pasteOffset);
+            const typedAfter = value.slice(pasteOffset + pasteLen);
+            const displayStr = typedBefore + indicator + typedAfter;
 
-          // Calculate the absolute character offset where this display line starts
-          let lineStartOffset = 0;
-          for (let j = 0; j < startLine + i; j++) {
-            lineStartOffset += visualLines[j].length;
-            // Account for newline characters between hard lines
-            // (visual lines from wrapping don't have newlines between them)
-          }
-          // Adjust for newlines: count how many hard-line boundaries precede this visual line
-          const hardLines = value.split("\n");
-          let offset = 0;
-          let vlIndex = 0;
-          for (let h = 0; h < hardLines.length && vlIndex <= startLine + i; h++) {
-            const wrapped = wrapLine(
-              hardLines[h],
-              contentWidth > 0 ? contentWidth : value.length + 1,
-            );
-            for (let w = 0; w < wrapped.length && vlIndex <= startLine + i; w++) {
-              if (vlIndex === startLine + i) {
-                lineStartOffset = offset;
-              }
-              offset += wrapped[w].length;
-              vlIndex++;
+            // Map real cursor to display cursor
+            let cursorInDisplay: number;
+            if (cursor <= pasteOffset) {
+              cursorInDisplay = cursor;
+            } else if (cursor >= pasteOffset + pasteLen) {
+              cursorInDisplay = cursor - pasteLen + indicator.length;
+            } else {
+              cursorInDisplay = pasteOffset + indicator.length;
             }
-            offset++; // newline
-          }
 
-          // Check if a given absolute offset falls inside any highlighted range
-          const isInHighlightedRange = (absOffset: number): boolean => {
-            if (isCommand) return absOffset < commandEndIndex;
-            for (const r of inlineCommandRanges) {
-              if (absOffset >= r.start && absOffset < r.end) return true;
-            }
-            return false;
-          };
-
-          // Render text with command tokens highlighted (both start-of-line and inline)
-          const renderSegments = (text: string, textStartOffset: number) => {
-            if (inlineCommandRanges.length === 0 && !isCommand) {
-              return <Text color={theme.text}>{text}</Text>;
-            }
-            // Walk through the text and split into highlighted/normal segments
-            const segments: Array<{ text: string; highlighted: boolean }> = [];
-            let pos = 0;
-            while (pos < text.length) {
-              const absPos = textStartOffset + pos;
-              const highlighted = isInHighlightedRange(absPos);
-              const start = pos;
-              while (pos < text.length && isInHighlightedRange(textStartOffset + pos) === highlighted) {
-                pos++;
-              }
-              segments.push({ text: text.slice(start, pos), highlighted });
-            }
-            if (segments.length === 0) return <Text color={theme.text}>{text}</Text>;
-            if (segments.length === 1) {
-              return segments[0].highlighted
-                ? <Text color={theme.commandColor} bold>{segments[0].text}</Text>
-                : <Text color={theme.text}>{segments[0].text}</Text>;
-            }
             return (
-              <>
-                {segments.map((seg, idx) =>
-                  seg.highlighted
-                    ? <Text key={idx} color={theme.commandColor} bold>{seg.text}</Text>
-                    : <Text key={idx} color={theme.text}>{seg.text}</Text>
-                )}
-              </>
-            );
-          };
-
-          const before = showCursor ? line.slice(0, col) : line;
-          const charUnderCursor = showCursor ? (col < line.length ? line[col] : " ") : "";
-          const after = showCursor ? line.slice(col + (col < line.length ? 1 : 0)) : "";
-          const cursorCharOffset = lineStartOffset + col;
-          const cursorInCommand = isInHighlightedRange(cursorCharOffset);
-
-          return (
-            <Box key={i}>
-              <Text color={disabled ? theme.textDim : theme.inputPrompt} bold>
-                {i === 0 ? PROMPT : "  "}
-              </Text>
-              {renderSegments(before, lineStartOffset)}
-              {showCursor && (
-                <Text
-                  color={cursorInCommand ? theme.commandColor : theme.text}
-                  bold={cursorInCommand}
-                  inverse={cursorVisible}
-                >
-                  {charUnderCursor}
+              <Box>
+                <Text color={disabled ? theme.textDim : theme.inputPrompt} bold>
+                  {PROMPT}
                 </Text>
-              )}
-              {after && renderSegments(after, lineStartOffset + col + (col < line.length ? 1 : 0))}
-            </Box>
-          );
-        })}
+                <Text color={theme.text}>{displayStr.slice(0, cursorInDisplay)}</Text>
+                <Text color={theme.text} inverse={cursorVisible}>
+                  {cursorInDisplay < displayStr.length ? displayStr[cursorInDisplay] : " "}
+                </Text>
+                {cursorInDisplay + 1 < displayStr.length && (
+                  <Text color={theme.text}>{displayStr.slice(cursorInDisplay + 1)}</Text>
+                )}
+              </Box>
+            );
+          }
+
+          return displayLines.map((line, i) => {
+            const showCursor = i === cursorDisplayLine;
+            const col = cursorLineInfo.col;
+
+            // Calculate the absolute character offset where this display line starts
+            let lineStartOffset = 0;
+            for (let j = 0; j < startLine + i; j++) {
+              lineStartOffset += visualLines[j].length;
+            }
+            const hardLines = value.split("\n");
+            let offset = 0;
+            let vlIndex = 0;
+            for (let h = 0; h < hardLines.length && vlIndex <= startLine + i; h++) {
+              const wrapped = wrapLine(
+                hardLines[h],
+                contentWidth > 0 ? contentWidth : value.length + 1,
+              );
+              for (let w = 0; w < wrapped.length && vlIndex <= startLine + i; w++) {
+                if (vlIndex === startLine + i) {
+                  lineStartOffset = offset;
+                }
+                offset += wrapped[w].length;
+                vlIndex++;
+              }
+              offset++; // newline
+            }
+
+            // Determine color for each character based on whether it's in the command portion
+            const renderSegments = (text: string, textStartOffset: number) => {
+              if (!isCommand || textStartOffset >= commandEndIndex) {
+                return <Text color={theme.text}>{text}</Text>;
+              }
+              const cmdChars = Math.min(text.length, commandEndIndex - textStartOffset);
+              if (cmdChars >= text.length) {
+                return (
+                  <Text color={theme.commandColor} bold>
+                    {text}
+                  </Text>
+                );
+              }
+              return (
+                <>
+                  <Text color={theme.commandColor} bold>
+                    {text.slice(0, cmdChars)}
+                  </Text>
+                  <Text color={theme.text}>{text.slice(cmdChars)}</Text>
+                </>
+              );
+            };
+
+            const before = showCursor ? line.slice(0, col) : line;
+            const charUnderCursor = showCursor ? (col < line.length ? line[col] : " ") : "";
+            const after = showCursor ? line.slice(col + (col < line.length ? 1 : 0)) : "";
+            const cursorCharOffset = lineStartOffset + col;
+            const cursorInCommand = isCommand && cursorCharOffset < commandEndIndex;
+
+            return (
+              <Box key={i}>
+                <Text color={disabled ? theme.textDim : theme.inputPrompt} bold>
+                  {i === 0 ? PROMPT : "  "}
+                </Text>
+                {renderSegments(before, lineStartOffset)}
+                {showCursor && (
+                  <Text
+                    color={cursorInCommand ? theme.commandColor : theme.text}
+                    bold={cursorInCommand}
+                    inverse={cursorVisible}
+                  >
+                    {charUnderCursor}
+                  </Text>
+                )}
+                {after &&
+                  renderSegments(after, lineStartOffset + col + (col < line.length ? 1 : 0))}
+              </Box>
+            );
+          });
+        })()}
       </Box>
       {/* Image paste status message */}
       {imageStatus && (
@@ -706,7 +762,7 @@ export function InputArea({
         </Box>
       )}
       {/* Slash command menu — shown below the input box */}
-      {isSlashMode && !disabled && filteredCommands.length > 0 && (
+      {isSlashMode && filteredCommands.length > 0 && (
         <SlashCommandMenu commands={commands} filter={slashFilter} selectedIndex={menuIndex} />
       )}
     </Box>

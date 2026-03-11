@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"]);
+const TEXT_EXTENSIONS = new Set([".md", ".txt"]);
+const ATTACHABLE_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...TEXT_EXTENSIONS]);
 
 const MEDIA_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -30,70 +32,42 @@ export interface ImageDimensions {
 }
 
 export interface ImageAttachment {
+  kind: "image" | "text";
   fileName: string;
   filePath: string;
   mediaType: string;
-  data: string; // base64
+  data: string; // base64 for images, raw text for text files
   dimensions?: ImageDimensions;
 }
 
 /** Detect image media type from raw buffer magic bytes. */
 export function detectMediaType(buffer: Buffer): string {
   if (buffer.length < 4) return "image/png";
-  // PNG: 137 80 78 71
-  if (buffer[0] === 137 && buffer[1] === 80 && buffer[2] === 78 && buffer[3] === 71) {
-    return "image/png";
-  }
-  // JPEG: FF D8 FF
-  if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) {
-    return "image/jpeg";
-  }
-  // GIF: 47 49 46
-  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
-    return "image/gif";
-  }
-  // WEBP: RIFF....WEBP (bytes 8-11 = 87 69 66 80)
+  if (buffer[0] === 137 && buffer[1] === 80 && buffer[2] === 78 && buffer[3] === 71) return "image/png";
+  if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return "image/jpeg";
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
   if (
     buffer.length >= 12 &&
-    buffer[0] === 0x52 &&
-    buffer[1] === 0x49 &&
-    buffer[2] === 0x46 &&
-    buffer[3] === 0x46 &&
-    buffer[8] === 0x57 &&
-    buffer[9] === 0x45 &&
-    buffer[10] === 0x42 &&
-    buffer[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-  // BMP: 42 4D
-  if (buffer[0] === 0x42 && buffer[1] === 0x4d) {
-    return "image/bmp";
-  }
-  // TIFF: little-endian (49 49 2A 00) or big-endian (4D 4D 00 2A)
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) return "image/webp";
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return "image/bmp";
   if (
     (buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2a && buffer[3] === 0x00) ||
     (buffer[0] === 0x4d && buffer[1] === 0x4d && buffer[2] === 0x00 && buffer[3] === 0x2a)
-  ) {
-    return "image/tiff";
-  }
+  ) return "image/tiff";
   return "image/png";
 }
 
 /** Detect media type from a base64 string. */
 function detectMediaTypeFromBase64(data: string): string {
   try {
-    const buf = Buffer.from(data, "base64");
-    return detectMediaType(buf);
+    return detectMediaType(Buffer.from(data, "base64"));
   } catch {
     return "image/png";
   }
 }
 
-/**
- * Lazily load sharp. Returns null if sharp is not available
- * (e.g. in environments where native modules can't be loaded).
- */
 async function loadSharp(): Promise<typeof import("sharp") | null> {
   try {
     return (await import("sharp")).default;
@@ -108,43 +82,26 @@ interface ProcessedImage {
   dimensions?: ImageDimensions;
 }
 
-/**
- * Process an image buffer: resize if too large, compress if too heavy.
- * Mirrors Claude Code's multi-pass compression strategy.
- */
-export async function processImage(
-  buffer: Buffer,
-  originalFormat?: string,
-): Promise<ProcessedImage> {
+export async function processImage(buffer: Buffer, originalFormat?: string): Promise<ProcessedImage> {
   const sharp = await loadSharp();
-
-  // Detect actual format from bytes
   const detectedType = detectMediaType(buffer);
   const format = detectedType.split("/")[1] === "jpeg" ? "jpeg" : detectedType.split("/")[1];
 
-  if (!sharp) {
-    // No sharp available — return raw with detected type
-    return { buffer, mediaType: detectedType };
-  }
+  if (!sharp) return { buffer, mediaType: detectedType };
 
   const metadata = await sharp(buffer).metadata();
   const resolvedFormat = metadata.format === "jpg" ? "jpeg" : (metadata.format ?? format);
   const mediaType =
-    resolvedFormat === "jpeg"
-      ? "image/jpeg"
-      : resolvedFormat === "png"
-        ? "image/png"
-        : resolvedFormat === "webp"
-          ? "image/webp"
-          : resolvedFormat === "gif"
-            ? "image/gif"
-            : detectedType;
+    resolvedFormat === "jpeg" ? "image/jpeg"
+    : resolvedFormat === "png" ? "image/png"
+    : resolvedFormat === "webp" ? "image/webp"
+    : resolvedFormat === "gif" ? "image/gif"
+    : detectedType;
 
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
 
   if (!width || !height) {
-    // Can't determine dimensions — try JPEG compression if too large
     if (buffer.length > MAX_IMAGE_BYTES) {
       const compressed = await sharp(buffer).jpeg({ quality: 80 }).toBuffer();
       return { buffer: compressed, mediaType: "image/jpeg" };
@@ -155,65 +112,28 @@ export async function processImage(
   let displayWidth = width;
   let displayHeight = height;
 
-  // If within both size and dimension limits, return as-is
-  if (
-    buffer.length <= MAX_IMAGE_BYTES &&
-    displayWidth <= MAX_DIMENSION &&
-    displayHeight <= MAX_DIMENSION
-  ) {
-    return {
-      buffer,
-      mediaType,
-      dimensions: {
-        originalWidth: width,
-        originalHeight: height,
-        displayWidth,
-        displayHeight,
-      },
-    };
+  if (buffer.length <= MAX_IMAGE_BYTES && displayWidth <= MAX_DIMENSION && displayHeight <= MAX_DIMENSION) {
+    return { buffer, mediaType, dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
   }
 
   const needsResize = displayWidth > MAX_DIMENSION || displayHeight > MAX_DIMENSION;
   const isPng = resolvedFormat === "png";
 
-  // Phase 1: If only oversized in bytes (not dimensions), try compression
   if (!needsResize && buffer.length > MAX_IMAGE_BYTES) {
     if (isPng) {
-      const pngCompressed = await sharp(buffer)
-        .png({ compressionLevel: 9, palette: true })
-        .toBuffer();
+      const pngCompressed = await sharp(buffer).png({ compressionLevel: 9, palette: true }).toBuffer();
       if (pngCompressed.length <= MAX_IMAGE_BYTES) {
-        return {
-          buffer: pngCompressed,
-          mediaType: "image/png",
-          dimensions: {
-            originalWidth: width,
-            originalHeight: height,
-            displayWidth,
-            displayHeight,
-          },
-        };
+        return { buffer: pngCompressed, mediaType: "image/png", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
       }
     }
-    // Try JPEG at decreasing quality
     for (const quality of [80, 60, 40, 20]) {
       const jpegBuf = await sharp(buffer).jpeg({ quality }).toBuffer();
       if (jpegBuf.length <= MAX_IMAGE_BYTES) {
-        return {
-          buffer: jpegBuf,
-          mediaType: "image/jpeg",
-          dimensions: {
-            originalWidth: width,
-            originalHeight: height,
-            displayWidth,
-            displayHeight,
-          },
-        };
+        return { buffer: jpegBuf, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
       }
     }
   }
 
-  // Phase 2: Resize if dimensions exceed limits
   if (displayWidth > MAX_DIMENSION) {
     displayHeight = Math.round((displayHeight * MAX_DIMENSION) / displayWidth);
     displayWidth = MAX_DIMENSION;
@@ -223,87 +143,41 @@ export async function processImage(
     displayHeight = MAX_DIMENSION;
   }
 
-  let resized = await sharp(buffer)
-    .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
-    .toBuffer();
-
-  // If resized is within limit, return
+  const resized = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).toBuffer();
   if (resized.length <= MAX_IMAGE_BYTES) {
-    return {
-      buffer: resized,
-      mediaType,
-      dimensions: {
-        originalWidth: width,
-        originalHeight: height,
-        displayWidth,
-        displayHeight,
-      },
-    };
+    return { buffer: resized, mediaType, dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
   }
 
-  // Phase 3: Resized but still too large — compress
   if (isPng) {
-    const pngCompressed = await sharp(buffer)
-      .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
-      .png({ compressionLevel: 9, palette: true })
-      .toBuffer();
+    const pngCompressed = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).png({ compressionLevel: 9, palette: true }).toBuffer();
     if (pngCompressed.length <= MAX_IMAGE_BYTES) {
-      return {
-        buffer: pngCompressed,
-        mediaType: "image/png",
-        dimensions: {
-          originalWidth: width,
-          originalHeight: height,
-          displayWidth,
-          displayHeight,
-        },
-      };
+      return { buffer: pngCompressed, mediaType: "image/png", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
     }
   }
 
   for (const quality of [80, 60, 40, 20]) {
-    const jpegBuf = await sharp(buffer)
-      .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality })
-      .toBuffer();
+    const jpegBuf = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).jpeg({ quality }).toBuffer();
     if (jpegBuf.length <= MAX_IMAGE_BYTES) {
-      return {
-        buffer: jpegBuf,
-        mediaType: "image/jpeg",
-        dimensions: {
-          originalWidth: width,
-          originalHeight: height,
-          displayWidth,
-          displayHeight,
-        },
-      };
+      return { buffer: jpegBuf, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
     }
   }
 
-  // Phase 4: Last resort — resize to 1000px and JPEG quality 20
   const fallbackWidth = Math.min(displayWidth, 1000);
   const fallbackHeight = Math.round((displayHeight * fallbackWidth) / Math.max(displayWidth, 1));
-  const lastResort = await sharp(buffer)
-    .resize(fallbackWidth, fallbackHeight, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 20 })
-    .toBuffer();
-
-  return {
-    buffer: lastResort,
-    mediaType: "image/jpeg",
-    dimensions: {
-      originalWidth: width,
-      originalHeight: height,
-      displayWidth: fallbackWidth,
-      displayHeight: fallbackHeight,
-    },
-  };
+  const lastResort = await sharp(buffer).resize(fallbackWidth, fallbackHeight, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 20 }).toBuffer();
+  return { buffer: lastResort, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth: fallbackWidth, displayHeight: fallbackHeight } };
 }
 
 /** Check if a file path points to an image based on extension. */
 export function isImagePath(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
+}
+
+/** Check if a file path points to an attachable file (image or text). */
+export function isAttachablePath(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return ATTACHABLE_EXTENSIONS.has(ext);
 }
 
 function resolvePath(filePath: string, cwd: string): string {
@@ -319,6 +193,8 @@ function resolvePath(filePath: string, cwd: string): string {
   if (resolved.startsWith("file://")) {
     resolved = resolved.slice(7);
   }
+  // Unescape backslash-escaped characters (e.g. "\ " → " ")
+  resolved = resolved.replace(/\\(.)/g, "$1");
   // Resolve home dir
   if (resolved.startsWith("~/")) {
     resolved = path.join(process.env.HOME ?? "/", resolved.slice(2));
@@ -329,8 +205,26 @@ function resolvePath(filePath: string, cwd: string): string {
 }
 
 /**
- * Extract image file paths from input text by checking if tokens resolve
- * to existing image files on disk. Returns verified paths and the remaining text.
+ * Check if a token looks like an intentional file path rather than a bare filename
+ * mentioned in conversation. Bare names like "claude.md" should not be auto-attached;
+ * only explicit paths like "./claude.md", "/tmp/file.md", "~/notes.md", etc.
+ */
+function looksLikePath(token: string): boolean {
+  const stripped = token.replace(/^['"]|['"]$/g, "");
+  return (
+    stripped.includes("/") ||
+    stripped.includes("\\") ||
+    stripped.startsWith("~") ||
+    stripped.startsWith("file://")
+  );
+}
+
+/**
+ * Extract attachable file paths from input text by checking if tokens resolve
+ * to existing files on disk. Returns verified paths and the remaining text.
+ *
+ * Only tokens that look like explicit paths (contain `/`, `~`, `\`, or `file://`)
+ * are considered. Bare filenames like "readme.md" are left as text.
  */
 export async function extractImagePaths(
   text: string,
@@ -339,22 +233,26 @@ export async function extractImagePaths(
   const imagePaths: string[] = [];
   const cleanParts: string[] = [];
 
-  // Try the entire input as a single path first
-  const wholePath = resolvePath(text, cwd);
-  if (isImagePath(wholePath) && (await fileExists(wholePath))) {
-    return { imagePaths: [wholePath], cleanText: "" };
+  // Try the entire input as a single path first (only if it looks like a path)
+  if (looksLikePath(text)) {
+    const wholePath = resolvePath(text, cwd);
+    if (isAttachablePath(wholePath) && (await fileExists(wholePath))) {
+      return { imagePaths: [wholePath], cleanText: "" };
+    }
   }
 
-  // Split on whitespace and check each token
-  const tokens = text.split(/\s+/);
+  // Split on unescaped whitespace (respect backslash-escaped spaces like "file\ name.png")
+  const tokens = text.match(/(?:[^\s\\]|\\.)+/g) ?? [];
   for (const token of tokens) {
     if (!token) continue;
-    const resolved = resolvePath(token, cwd);
-    if (isImagePath(resolved) && (await fileExists(resolved))) {
-      imagePaths.push(resolved);
-    } else {
-      cleanParts.push(token);
+    if (looksLikePath(token)) {
+      const resolved = resolvePath(token, cwd);
+      if (isAttachablePath(resolved) && (await fileExists(resolved))) {
+        imagePaths.push(resolved);
+        continue;
+      }
     }
+    cleanParts.push(token);
   }
 
   return { imagePaths, cleanText: cleanParts.join(" ") };
@@ -369,12 +267,25 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-/** Read an image file, process it (resize/compress), and return as ImageAttachment. */
+/** Read a file and return an attachment (base64 for images, raw text for text files). */
 export async function readImageFile(filePath: string): Promise<ImageAttachment> {
+  const ext = path.extname(filePath).toLowerCase();
+
+  if (TEXT_EXTENSIONS.has(ext)) {
+    const content = await fs.readFile(filePath, "utf-8");
+    return {
+      kind: "text",
+      fileName: path.basename(filePath),
+      filePath,
+      mediaType: "text/plain",
+      data: content,
+    };
+  }
   const buffer = await fs.readFile(filePath);
   const processed = await processImage(buffer);
   const data = processed.buffer.toString("base64");
   return {
+    kind: "image",
     fileName: path.basename(filePath),
     filePath,
     mediaType: processed.mediaType,
@@ -464,6 +375,7 @@ function getClipboardImageMacOS(): Promise<ImageAttachment | null> {
           await fs.unlink(tmpPath).catch(() => {});
           const processed = await processImage(rawBuffer);
           resolve({
+            kind: "image",
             fileName: `clipboard.${ext}`,
             filePath: tmpPath,
             mediaType: processed.mediaType,

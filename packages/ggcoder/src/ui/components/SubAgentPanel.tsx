@@ -92,15 +92,16 @@ function AgentRow({
     <Box flexDirection="column">
       {/* Agent summary line */}
       <Box>
-        <Text color={theme.textDim}>{connector} </Text>
+        <Text color={theme.textDim}>{connector}</Text>
         {isRunning ? (
           <Text color={theme.primary} bold>
+            {" "}
             {SPINNER_FRAMES[spinnerFrame]}{" "}
           </Text>
         ) : agent.status === "done" ? (
-          <Text color={theme.success}>{"\u2713 "}</Text>
+          <Text color={theme.success}>{" \u2713 "}</Text>
         ) : (
-          <Text color={theme.error}>{"\u2717 "}</Text>
+          <Text color={theme.error}>{" \u2717 "}</Text>
         )}
         {agent.agentName && agent.agentName !== "default" && (
           <Text color={theme.accent} dimColor={!isRunning}>
