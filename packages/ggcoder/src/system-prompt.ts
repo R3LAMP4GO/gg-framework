@@ -122,11 +122,10 @@ export async function buildSystemPrompt(
       `- **web_fetch**: Read documentation, check live endpoints, fetch external resources.\n` +
       `- **task_output**: Read output from a background process by ID. Returns new output since last read (incremental). Use \`from_start=true\` to read from the beginning.\n` +
       `- **task_stop**: Stop a background process by ID. Sends SIGTERM, then SIGKILL after 5 seconds.\n` +
-      `- **subagent**: Spawn an isolated sub-agent only when the task genuinely benefits from isolation or parallelism. Each agent spawn has overhead (new process, new context window, no shared state) — use your own tools first.\n` +
-      `  - **When to spawn**: (1) Parallel independent tasks that would be slow sequentially. (2) Tasks producing large output you don't need in your context. (3) Deep research requiring many tool calls that would bloat your conversation.\n` +
-      `  - **When NOT to spawn**: (1) A single grep/find/read can answer the question — just do it yourself. (2) You need the result to immediately inform your next edit — the round-trip wastes tokens. (3) The task is simple enough to do in 1-3 tool calls. (4) You already have the relevant files in context.\n` +
-      `  - **Built-in agents**: \`explore\` (read-only search, cheapest model — use for broad multi-file searches across unfamiliar code), \`plan\` (architecture/planning), \`worker\` (full capability), \`fork\` (isolated parallel execution).\n` +
-      `  - **Rule of thumb**: If you can answer it with one \`grep\` + one \`read\`, don't spawn an agent. Agents are for when you'd need 5+ tool calls to gather scattered information.\n` +
+      `- **subagent**: Spawn an isolated sub-agent. STOP — before using this tool, try one \`grep\` or \`find\` first. If that answers the question, you don't need an agent.\n` +
+      `  - **Only spawn when**: (1) You need 2+ independent tasks running in PARALLEL. (2) The research requires 5+ tool calls across many files and would bloat your context.\n` +
+      `  - **Never spawn when**: You can do it yourself in 1-3 tool calls, you need the result for your very next edit, or you already have the relevant files in context.\n` +
+      `  - **Built-in agents**: \`explore\` (read-only search, cheapest model), \`plan\` (architecture/planning, read-only), \`worker\` (full capability), \`fork\` (isolated parallel execution).\n` +
       `- **tasks**: Manage the project task pane (Shift+\`). Actions: \`add\` (title + prompt required), \`list\`, \`done\` (id required), \`remove\` (id required). Proactively add tasks when you notice issues while working.\n` +
       `  - **title**: Short label (~10 words max) shown in the task pane.\n` +
       `  - **prompt**: Standalone instruction sent to an agent with NO prior context. The agent must complete it from the prompt alone, so include specific file paths, what to change, and enough context to act without ambiguity. Be as long as needed for clarity, but no longer. If the task requires latest docs or APIs, tell the agent to research/fetch them.\n` +
@@ -142,7 +141,7 @@ export async function buildSystemPrompt(
       `- Don't generate stubs or placeholder implementations unless asked.\n` +
       `- Don't add TODOs for yourself — finish the work or state what's incomplete.\n` +
       `- Don't pad responses with filler or repeat back what the user said.\n` +
-      `- Don't spawn a sub-agent for something you can do with one grep + one read. Agents have real overhead — use them only for parallel work or deep multi-file research.\n` +
+      `- Don't spawn a sub-agent for something you can do yourself. Try grep/find/read FIRST — if that works, you didn't need an agent. Agents are ONLY for parallel execution or 5+ tool-call research tasks.\n` +
       `- Don't guess or make up file paths, function names, API methods, or library features. If you're unsure, use \`find\`, \`grep\`, or \`web_fetch\` to verify before acting.\n` +
       `- Don't hallucinate CLI flags, config options, or package versions — check docs or run \`--help\` first.`,
   );
