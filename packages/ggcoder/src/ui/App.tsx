@@ -43,6 +43,7 @@ import { loadCustomCommands, type CustomCommand } from "../core/custom-commands.
 import { extractEmbedded, parseBashPrefix, extractFileMentions } from "../core/slash-commands.js";
 import type { MCPClientManager } from "../core/mcp/index.js";
 import { getMCPServers } from "../core/mcp/index.js";
+import type { AuthStorage } from "../core/auth-storage.js";
 import { pruneHistory, flushOnTurnText, flushOnTurnEnd } from "./live-item-flush.js";
 import {
   createPlanModeManager,
@@ -362,6 +363,7 @@ export interface AppProps {
   agents?: AgentDefinition[];
   settingsFile?: string;
   mcpManager?: MCPClientManager;
+  authStorage?: AuthStorage;
 }
 
 // ── App Component ──────────────────────────────────────────
@@ -538,10 +540,17 @@ export function App(props: AppProps) {
       setLiveItems((prev) => [...prev, { kind: "compacting", id: spinId }]);
 
       try {
+        // Resolve fresh credentials for compaction too
+        let compactApiKey = activeApiKey;
+        if (props.authStorage) {
+          const creds = await props.authStorage.resolveCredentials(currentProvider);
+          compactApiKey = creds.accessToken;
+        }
+
         const result = await compact(messages, {
           provider: currentProvider,
           model: currentModel,
-          apiKey: activeApiKey,
+          apiKey: compactApiKey,
           contextWindow,
           signal: undefined,
         });
@@ -670,6 +679,16 @@ export function App(props: AppProps) {
     setSelectedTaskIndex(index);
   }, []);
 
+  // Resolve fresh OAuth credentials before each agent loop run.
+  // Falls back to the static props when authStorage is not available.
+  const resolveCredentials = useCallback(async () => {
+    if (props.authStorage) {
+      const creds = await props.authStorage.resolveCredentials(currentProvider);
+      return { apiKey: creds.accessToken, accountId: creds.accountId };
+    }
+    return { apiKey: activeApiKey!, accountId: activeAccountId };
+  }, [props.authStorage, currentProvider, activeApiKey, activeAccountId]);
+
   const agentLoop = useAgentLoop(
     messagesRef,
     {
@@ -682,6 +701,7 @@ export function App(props: AppProps) {
       apiKey: activeApiKey,
       baseUrl: props.baseUrl,
       accountId: activeAccountId,
+      resolveCredentials,
       transformContext,
     },
     {
@@ -1077,6 +1097,7 @@ export function App(props: AppProps) {
         stdout?.write("\x1b[2J\x1b[3J\x1b[H");
         setHistory([{ kind: "banner", id: "banner" }]);
         setLiveItems([]);
+        setDoneStatus(null);
         messagesRef.current = messagesRef.current.slice(0, 1); // keep system prompt
         agentLoop.reset();
         setLiveItems([{ kind: "info", text: "Session cleared.", id: getId() }]);
@@ -1142,14 +1163,14 @@ export function App(props: AppProps) {
         return;
       }
 
-      // Handle prompt-template commands (built-in + custom from .gg/commands/)
+      // Handle prompt-template commands (custom from .gg/commands/ take priority over built-in)
       if (trimmed.startsWith("/")) {
         const parts = trimmed.slice(1).split(" ");
         const cmdName = parts[0];
         const cmdArgs = parts.slice(1).join(" ").trim();
-        const builtinCmd = getPromptCommand(cmdName);
-        const customCmd = !builtinCmd ? customCommands.find((c) => c.name === cmdName) : undefined;
-        const promptText = builtinCmd?.prompt ?? customCmd?.prompt;
+        const customCmd = customCommands.find((c) => c.name === cmdName);
+        const builtinCmd = !customCmd ? getPromptCommand(cmdName) : undefined;
+        const promptText = customCmd?.prompt ?? builtinCmd?.prompt;
 
         if (promptText) {
           log(
@@ -1215,11 +1236,9 @@ export function App(props: AppProps) {
         const embedded = extractEmbedded(trimmed, knownNames);
         if (embedded) {
           log("INFO", "command", `Embedded command: /${embedded.command} (args: ${embedded.args})`);
-          const builtinCmd = getPromptCommand(embedded.command);
-          const customCmd = !builtinCmd
-            ? customCommands.find((c) => c.name === embedded.command)
-            : undefined;
-          const promptText = builtinCmd?.prompt ?? customCmd?.prompt;
+          const customCmd = customCommands.find((c) => c.name === embedded.command);
+          const builtinCmd = !customCmd ? getPromptCommand(embedded.command) : undefined;
+          const promptText = customCmd?.prompt ?? builtinCmd?.prompt;
 
           if (promptText) {
             // Move live items into history before starting
@@ -1521,7 +1540,14 @@ export function App(props: AppProps) {
 
             // Remove old MCP tools, connect new ones
             let apiKey: string | undefined;
-            if (newProvider === "glm") {
+            if (newProvider === "glm" && props.authStorage) {
+              try {
+                const glmCreds = await props.authStorage.resolveCredentials("glm");
+                apiKey = glmCreds.accessToken;
+              } catch {
+                // GLM not configured — skip Z.AI MCP servers
+              }
+            } else if (newProvider === "glm") {
               apiKey = props.credentialsByProvider?.["glm"]?.accessToken;
             }
             try {
@@ -1564,7 +1590,7 @@ export function App(props: AppProps) {
         });
       }
     },
-    [props.settingsFile, props.mcpManager, props.credentialsByProvider],
+    [props.settingsFile, props.mcpManager, props.credentialsByProvider, props.authStorage],
   );
 
   // All available slash commands for the command palette
@@ -1835,18 +1861,20 @@ export function App(props: AppProps) {
             />
           </Box>
 
-          {/* Pinned status line */}
+          {/* Pinned status line — always use "round" border but make it
+              transparent when not thinking, so the Box height stays constant
+              across phase transitions and Ink's cursor math stays aligned. */}
           {agentLoop.isRunning && agentLoop.activityPhase !== "idle" ? (
             <Box
               marginTop={1}
-              borderStyle={agentLoop.activityPhase === "thinking" ? "round" : undefined}
+              borderStyle="round"
               borderColor={
                 agentLoop.activityPhase === "thinking"
                   ? THINKING_BORDER_COLORS[thinkingBorderFrame]
-                  : undefined
+                  : "transparent"
               }
-              paddingLeft={agentLoop.activityPhase === "thinking" ? 1 : 0}
-              paddingRight={agentLoop.activityPhase === "thinking" ? 1 : 0}
+              paddingLeft={1}
+              paddingRight={1}
             >
               <ActivityIndicator
                 phase={agentLoop.activityPhase}

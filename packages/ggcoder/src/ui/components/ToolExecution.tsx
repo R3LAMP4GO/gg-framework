@@ -1,10 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, memo } from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { Spinner } from "./Spinner.js";
 import { highlightCode, langFromPath } from "../utils/highlight.js";
 
 const MAX_OUTPUT_LINES = 4;
+
+// Tools that typically show a multi-line body when done (header + summary +
+// diff/result lines).  While these tools are running we reserve height so the
+// live area doesn't jump from 1 line (spinner) to 6+ lines (result), which
+// causes Ink's cursor math to misalign and the viewport to jump.
+// Height = 1 header + 1 summary + MAX_OUTPUT_LINES body + 1 hidden-count line.
+const BODY_TOOLS = new Set(["edit", "bash", "grep", "find", "ls", "tasks"]);
+const RUNNING_MIN_HEIGHT = 1 + 1 + MAX_OUTPUT_LINES + 1;
 
 interface ToolRunningProps {
   status: "running";
@@ -37,8 +45,11 @@ export function ToolExecution(props: ToolExecutionProps) {
 
   if (props.status === "running") {
     const { label, detail } = getToolHeaderParts(props.name, props.args);
+    // Reserve height for tools that will show a multi-line body when done,
+    // preventing the live area from jumping when the result arrives.
+    const reserveHeight = BODY_TOOLS.has(props.name) ? RUNNING_MIN_HEIGHT : undefined;
     return (
-      <Box marginTop={1}>
+      <Box marginTop={1} minHeight={reserveHeight}>
         <Spinner label={detail ? `${label}(${detail})` : label} />
       </Box>
     );
@@ -482,7 +493,13 @@ function buildResultBody(name: string, result: string, isError: boolean): BodyCo
 
 // ── Diff line component ────────────────────────────────────
 
-function DiffLine({ line, padWidth }: { line: NumberedDiffLine; padWidth: number }) {
+const DiffLine = memo(function DiffLine({
+  line,
+  padWidth,
+}: {
+  line: NumberedDiffLine;
+  padWidth: number;
+}) {
   // Flash animation: changed lines briefly appear brighter on mount
   const [isNew, setIsNew] = useState(line.type !== "context");
   useEffect(() => {
@@ -521,11 +538,11 @@ function DiffLine({ line, padWidth }: { line: NumberedDiffLine; padWidth: number
       {line.content}
     </Text>
   );
-}
+});
 
 // ── Grep result line ───────────────────────────────────────
 
-function GrepLine({ line }: { line: string }) {
+const GrepLine = memo(function GrepLine({ line }: { line: string }) {
   // Format: filepath:lineNo:content
   const firstColon = line.indexOf(":");
   if (firstColon === -1) return <Text color="#9ca3af">{line}</Text>;
@@ -546,11 +563,11 @@ function GrepLine({ line }: { line: string }) {
       <Text color="#9ca3af">{content}</Text>
     </Text>
   );
-}
+});
 
 // ── Find result line ───────────────────────────────────────
 
-function FindLine({ line }: { line: string }) {
+const FindLine = memo(function FindLine({ line }: { line: string }) {
   const trimmed = line.trim();
   if (trimmed.endsWith("/")) {
     return <Text color="#60a5fa">{trimmed}</Text>;
@@ -566,11 +583,11 @@ function FindLine({ line }: { line: string }) {
       <Text color="#e5e7eb">{trimmed.slice(lastSlash + 1)}</Text>
     </Text>
   );
-}
+});
 
 // ── Ls result line ─────────────────────────────────────────
 
-function LsLine({ line }: { line: string }) {
+const LsLine = memo(function LsLine({ line }: { line: string }) {
   // Format: "d  -        dirname/" or "f  1.2K     filename"
   const parts = line.match(/^([dfl])\s+(\S+)\s+(.+)$/);
   if (!parts) return <Text color="#9ca3af">{line}</Text>;
@@ -594,11 +611,11 @@ function LsLine({ line }: { line: string }) {
       <Text color="#6b7280"> {size}</Text>
     </Text>
   );
-}
+});
 
 // ── Task result line ────────────────────────────────────
 
-function TaskLine({ line }: { line: string }) {
+const TaskLine = memo(function TaskLine({ line }: { line: string }) {
   // Format: "[✓] Task text  (id: abcd1234, done)" or "[ ] Task text  (id: ..., pending)"
   const match = line.match(/^\[(.)\]\s+(.+?)\s{2}\(id:\s*(\w+),\s*(\S+)\)$/);
   if (!match) return <Text color="#9ca3af">{line}</Text>;
@@ -614,7 +631,7 @@ function TaskLine({ line }: { line: string }) {
       <Text color="#6b7280"> {id}</Text>
     </Text>
   );
-}
+});
 
 // ── MCP result line ─────────────────────────────────────
 
@@ -624,7 +641,7 @@ function truncLine(s: string, max = MAX_MCP_LINE_LENGTH): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
-function MCPResultLine({ line }: { line: string }) {
+const MCPResultLine = memo(function MCPResultLine({ line }: { line: string }) {
   // Key-value pattern: "Repository: value" or "Path: value" or "Title: value"
   const kvMatch = line.match(/^([A-Z][A-Za-z_ ]+):\s+(.+)$/);
   if (kvMatch) {
@@ -675,4 +692,4 @@ function MCPResultLine({ line }: { line: string }) {
   }
   // Fallback: truncate long plain text
   return <Text color="#9ca3af">{truncLine(line)}</Text>;
-}
+});

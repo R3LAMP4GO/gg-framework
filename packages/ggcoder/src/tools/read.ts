@@ -57,6 +57,15 @@ export const BINARY_EXTENSIONS = new Set([
   ".class",
   ".o",
   ".obj",
+  ".asar",
+  ".node",
+  ".wasm",
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+  ".snap",
+  ".pack",
+  ".idx",
 ]);
 
 const ReadParams = z.object({
