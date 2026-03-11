@@ -9,6 +9,7 @@
  */
 
 import type { AgentDefinition } from "./agents.js";
+import { getCheapestModel, getMidTierModel } from "./model-registry.js";
 
 // ── Common Suffix ────────────────────────────────────────
 // Appended to every subagent prompt to standardize output format.
@@ -178,7 +179,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
       "for comprehensive analysis across multiple locations and naming conventions.",
     tools: ["read", "grep", "find", "ls", "bash"],
     disallowedTools: ["write", "edit", "subagent"],
-    model: undefined, // Resolved at spawn time via getExploreModel()
+    model: "haiku", // Resolved at spawn time via resolveAgentModel()
     maxTurns: 10,
     systemPrompt: EXPLORE_SYSTEM_PROMPT,
     source: "global",
@@ -191,7 +192,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
       "identifies critical files, and considers architectural trade-offs.",
     tools: ["read", "grep", "find", "ls", "bash"],
     disallowedTools: ["write", "edit", "subagent"],
-    model: undefined, // Inherits from parent
+    model: "inherit", // Inherits from parent
     maxTurns: 15,
     permissionMode: "plan",
     systemPrompt: PLAN_SYSTEM_PROMPT,
@@ -205,7 +206,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
       "and are not confident that you will find the right match in the first few tries, " +
       "use this agent to perform the search for you.",
     tools: [], // Empty = inherit all tools
-    model: undefined, // Inherits from parent
+    model: "inherit", // Inherits from parent
     maxTurns: 30,
     systemPrompt: WORKER_SYSTEM_PROMPT,
     source: "global",
@@ -217,7 +218,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
       "further sub-agents. Reports structured results in a concise format. " +
       "Use for parallel task execution where each fork handles one unit of work.",
     tools: [], // Inherit all tools
-    model: undefined, // Inherits from parent
+    model: "inherit", // Inherits from parent
     maxTurns: 200,
     systemPrompt: WORKER_FORK_SYSTEM_PROMPT,
     source: "global",
@@ -242,5 +243,31 @@ export function getExploreModel(provider: string, parentModel: string): string {
       return "kimi-k2.5";
     default:
       return parentModel;
+  }
+}
+
+/**
+ * Resolve the model for an agent based on its model hint.
+ * - "haiku" / "cheapest": cheapest model for the provider
+ * - "sonnet" / "mid": mid-tier model for the provider
+ * - "inherit" / undefined: parent model (default)
+ * - specific model ID: use as-is
+ */
+export function resolveAgentModel(
+  agentModel: string | undefined,
+  provider: string,
+  parentModel: string,
+): string {
+  if (!agentModel || agentModel === "inherit") return parentModel;
+
+  switch (agentModel) {
+    case "haiku":
+    case "cheapest":
+      return getCheapestModel(provider);
+    case "sonnet":
+    case "mid":
+      return getMidTierModel(provider, parentModel);
+    default:
+      return agentModel;
   }
 }
