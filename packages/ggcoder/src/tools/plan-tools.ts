@@ -59,6 +59,10 @@ export function createEnterPlanModeTool(
 
 const ExitPlanModeParams = z.object({
   plan: z.string().describe("The complete implementation plan in markdown format"),
+  clear_context: z.boolean().optional().default(false).describe(
+    "Whether to compact the conversation after plan approval to save tokens for implementation. " +
+    "Recommended for long planning sessions."
+  ),
 });
 
 export function createExitPlanModeTool(
@@ -70,13 +74,17 @@ export function createExitPlanModeTool(
       "Exit plan mode and present the implementation plan for user review. " +
       "The plan should be a complete markdown document with approach summary, " +
       "step-by-step strategy, files to modify, and potential challenges. " +
-      "The user will be able to approve, edit, reject (with feedback), or cancel the plan.",
+      "The user will be able to approve, edit, reject (with feedback), or cancel the plan.\n\n" +
+      "Set clear_context=true to compact the conversation after approval, saving tokens for implementation.",
     parameters: ExitPlanModeParams,
-    async execute({ plan }) {
+    async execute({ plan, clear_context }) {
       if (manager.state !== "planning") {
         return `Cannot exit plan mode: current state is ${manager.state}. Must be in planning state.`;
       }
       await manager.exitWithPlan(plan);
+      if (clear_context) {
+        manager.setClearContextOnExit(true);
+      }
       return (
         "Plan submitted for review. The user will now see your plan and can:\n" +
         "- [a]pprove — execute the plan\n" +

@@ -315,3 +315,67 @@ export async function compact(
     },
   };
 }
+
+/**
+ * Aggressive compaction for plan mode transition.
+ * Drops all planning exploration and replaces it with the approved plan.
+ * Much more aggressive than regular compaction — only preserves the plan conclusions.
+ */
+export async function compactForPlanTransition(
+  messages: Message[],
+  planContent: string,
+  options: {
+    provider: Provider;
+    model: string;
+    apiKey?: string;
+    contextWindow: number;
+    signal?: AbortSignal;
+  },
+): Promise<{ messages: Message[]; result: CompactionResult }> {
+  const originalCount = messages.length;
+  const tokensBeforeEstimate = estimateConversationTokens(messages);
+
+  log("INFO", "compaction", "Plan transition compaction", {
+    messageCount: String(originalCount),
+    planChars: String(planContent.length),
+  });
+
+  const systemMessage = messages[0];
+
+  // Build a concise summary that preserves the plan
+  const planSummary: Message = {
+    role: "user",
+    content:
+      `[Plan Mode Completed — Context Cleared]\n\n` +
+      `The following implementation plan was approved by the user:\n\n` +
+      `${planContent}\n\n` +
+      `Proceed with implementing this plan. You have full tool access.`,
+  };
+
+  const ackMessage: Message = {
+    role: "assistant",
+    content:
+      "Understood. I have the approved plan and will proceed with implementation. " +
+      "I'll follow the plan step by step, starting with the foundational changes.",
+  };
+
+  const newMessages: Message[] = [systemMessage, planSummary, ackMessage];
+  const tokensAfterEstimate = estimateConversationTokens(newMessages);
+  const reduction = Math.round((1 - tokensAfterEstimate / tokensBeforeEstimate) * 100);
+
+  log("INFO", "compaction", "Plan transition compaction complete", {
+    tokensBefore: String(tokensBeforeEstimate),
+    tokensAfter: String(tokensAfterEstimate),
+    reduction: `${reduction}%`,
+  });
+
+  return {
+    messages: newMessages,
+    result: {
+      originalCount,
+      newCount: newMessages.length,
+      tokensBeforeEstimate,
+      tokensAfterEstimate,
+    },
+  };
+}
