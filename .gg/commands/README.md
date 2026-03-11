@@ -21,7 +21,7 @@ These commands leverage GG Coder's built-in tools:
 - `bash` — run shell commands (lint, test, git)
 - `find` / `grep` / `read` — explore codebase
 - `tasks` — spawn parallel sub-tasks
-- `web_search` / `web_fetch` — research docs
+- `web_fetch` — research docs and fetch URLs
 - `mcp__grep__searchGitHub` — verify against real-world code
 
 ## Differences from Claude Code Plugin
@@ -30,7 +30,7 @@ These commands leverage GG Coder's built-in tools:
 |---------|-------------|----------|
 | Parallel agents | Task tool (subagent) | `tasks` tool (task pane) |
 | Code search | Grep MCP (if configured) | `mcp__grep__searchGitHub` (built-in) |
-| Web research | WebSearch (if configured) | `web_search` + `web_fetch` (built-in) |
+| Web research | WebSearch (if configured) | `web_fetch` (built-in) |
 | Slash commands | `/command` syntax | Copy-paste or file reference |
 | Hooks | hooks.json events | Not applicable |
 

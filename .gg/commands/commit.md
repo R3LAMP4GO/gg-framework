@@ -1,3 +1,8 @@
+---
+name: commit
+description: Lint → typecheck → AI commit message → push
+---
+
 # /commit — Quality Check + AI Commit + Push
 
 Run quality checks, generate an AI commit message, and push. Stop on any errors.

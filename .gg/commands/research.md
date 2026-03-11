@@ -1,3 +1,8 @@
+---
+name: research
+description: 6-agent research → output actionable RESEARCH.md
+---
+
 # /research — Best Tools & Deps for Your Project
 
 Research the best 2026 tools, dependencies, and patterns for what you want to build, then output a concise RESEARCH.md.
@@ -19,15 +24,15 @@ Use the `tasks` tool to create all 6 at once:
 
 ### Task 2 — Stack Validation
 **Title:** Validate stack choice for 2026
-**Prompt:** For a project described as: "$PROJECT_DESC" — use `web_search` to research whether [CURRENT STACK] is the best choice in 2026. Compare the top 2-3 alternatives on performance, ecosystem size, and developer experience. Pick ONE winner. If the current stack is already best, confirm with evidence. Output: Winner, why, and 2-3 bullet comparison. Every claim must have a source URL.
+**Prompt:** For a project described as: "$PROJECT_DESC" — use `web_fetch` to research whether [CURRENT STACK] is the best choice in 2026. Compare the top 2-3 alternatives on performance, ecosystem size, and developer experience. Pick ONE winner. If the current stack is already best, confirm with evidence. Output: Winner, why, and 2-3 bullet comparison. Every claim must have a source URL.
 
 ### Task 3 — Core Dependencies
 **Title:** Research best deps for each feature
-**Prompt:** For a [STACK] project that needs: $PROJECT_DESC — use `web_search` to find the single best library for EACH feature in 2026. Confirm latest stable version numbers via search. Use `mcp__grep__searchGitHub` to verify real projects actually use these libraries. Output a table: package | exact version | one-line purpose. No outdated packages. No "popular in 2023" picks.
+**Prompt:** For a [STACK] project that needs: $PROJECT_DESC — use `web_fetch` to find the single best library for EACH feature in 2026. Confirm latest stable version numbers via search. Use `mcp__grep__searchGitHub` to verify real projects actually use these libraries. Output a table: package | exact version | one-line purpose. No outdated packages. No "popular in 2023" picks.
 
 ### Task 4 — Dev Tooling
 **Title:** Research best 2026 dev tooling
-**Prompt:** For a [STACK] project — use `web_search` to find the best 2026 dev tooling: package manager, bundler, linter, formatter, test framework, type checker. Pick ONE per category. Verify current recommendations via official docs. Output: tool | version | category. Include exact versions confirmed via search.
+**Prompt:** For a [STACK] project — use `web_fetch` to find the best 2026 dev tooling: package manager, bundler, linter, formatter, test framework, type checker. Pick ONE per category. Verify current recommendations via official docs. Output: tool | version | category. Include exact versions confirmed via search.
 
 ### Task 5 — Architecture
 **Title:** Research project architecture patterns
@@ -35,7 +40,7 @@ Use the `tasks` tool to create all 6 at once:
 
 ### Task 6 — Config & Integration
 **Title:** Research config files needed
-**Prompt:** For a [STACK] project with [DETECTED TOOLING] — use `web_search` for current config best practices. Cover: linter config, formatter config, TS/type config, env setup, CI basics. Output exact config file contents or key settings for each file that should be created.
+**Prompt:** For a [STACK] project with [DETECTED TOOLING] — use `web_fetch` for current config best practices. Cover: linter config, formatter config, TS/type config, env setup, CI basics. Output exact config file contents or key settings for each file that should be created.
 
 ## Step 2: Synthesize into RESEARCH.md
 

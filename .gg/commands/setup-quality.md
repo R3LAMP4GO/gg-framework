@@ -1,3 +1,8 @@
+---
+name: setup-quality
+description: Auto-detect project → configure linting/typechecking
+---
+
 # /setup-quality — Auto-Configure Code Quality
 
 Detect project type, install missing linting/typechecking tools, and configure them.
@@ -67,7 +72,7 @@ Add missing scripts to package.json (JS/TS):
 
 ## Step 4: Create Config Files (if missing)
 
-Generate sensible defaults for any missing config files. Use `web_search` to verify current recommended configs if unsure.
+Generate sensible defaults for any missing config files. Use `web_fetch` to verify current recommended configs if unsure.
 
 ## Step 5: Verify Setup
 

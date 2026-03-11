@@ -1,3 +1,8 @@
+---
+name: candy
+description: 5-agent parallel codebase health scan (dead code, bugs, security)
+---
+
 # /candy — Codebase Health Scan
 
 Find low-risk, high-reward wins across the codebase using 5 parallel task agents.

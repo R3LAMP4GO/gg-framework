@@ -1163,14 +1163,14 @@ export function App(props: AppProps) {
         return;
       }
 
-      // Handle prompt-template commands (built-in + custom from .gg/commands/)
+      // Handle prompt-template commands (custom from .gg/commands/ take priority over built-in)
       if (trimmed.startsWith("/")) {
         const parts = trimmed.slice(1).split(" ");
         const cmdName = parts[0];
         const cmdArgs = parts.slice(1).join(" ").trim();
-        const builtinCmd = getPromptCommand(cmdName);
-        const customCmd = !builtinCmd ? customCommands.find((c) => c.name === cmdName) : undefined;
-        const promptText = builtinCmd?.prompt ?? customCmd?.prompt;
+        const customCmd = customCommands.find((c) => c.name === cmdName);
+        const builtinCmd = !customCmd ? getPromptCommand(cmdName) : undefined;
+        const promptText = customCmd?.prompt ?? builtinCmd?.prompt;
 
         if (promptText) {
           log(
@@ -1236,11 +1236,9 @@ export function App(props: AppProps) {
         const embedded = extractEmbedded(trimmed, knownNames);
         if (embedded) {
           log("INFO", "command", `Embedded command: /${embedded.command} (args: ${embedded.args})`);
-          const builtinCmd = getPromptCommand(embedded.command);
-          const customCmd = !builtinCmd
-            ? customCommands.find((c) => c.name === embedded.command)
-            : undefined;
-          const promptText = builtinCmd?.prompt ?? customCmd?.prompt;
+          const customCmd = customCommands.find((c) => c.name === embedded.command);
+          const builtinCmd = !customCmd ? getPromptCommand(embedded.command) : undefined;
+          const promptText = customCmd?.prompt ?? builtinCmd?.prompt;
 
           if (promptText) {
             // Move live items into history before starting

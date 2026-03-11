@@ -1,3 +1,8 @@
+---
+name: setup-tests
+description: Auto-detect stack → scaffold comprehensive tests
+---
+
 # /setup-tests — Auto-Scaffold Comprehensive Tests
 
 Detect project type and set up testing infrastructure with 2026 best practices.
@@ -11,7 +16,7 @@ Use `find`, `ls`, and `read` to detect:
 
 ## Step 2: Pick Test Tools
 
-Use `web_search` to confirm current (2026) recommended tools:
+Use `web_fetch` to confirm current (2026) recommended tools:
 
 | Language | Unit/Integration | E2E | Notes |
 |----------|------------------|-----|-------|

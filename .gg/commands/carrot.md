@@ -1,6 +1,11 @@
+---
+name: carrot
+description: 8-agent parallel verification against real-world patterns & docs
+---
+
 # /carrot — Verify Against Real-World Patterns
 
-Verify this codebase against current best practices using 8 parallel task agents. Every finding must be backed by `mcp__grep__searchGitHub` (real code samples) or `web_search` (official docs).
+Verify this codebase against current best practices using 8 parallel task agents. Every finding must be backed by `mcp__grep__searchGitHub` (real code samples) or `web_fetch` (official docs).
 
 ## Instructions
 
@@ -10,11 +15,11 @@ Replace `[CWD]` with the actual working directory and `[STACK]` with detected st
 
 ### Task 1 — Core Framework
 **Title:** Verify framework usage patterns
-**Prompt:** In `[CWD]`, detect the main framework ([STACK]). Read key source files to find framework usage patterns. Use `web_search` to check official docs for current recommended patterns. Compare. Only report: OUTDATED (old patterns with verified better alternatives), DEPRECATED (APIs marked deprecated in official docs), or INCORRECT (contradicts docs). Output: `[OUTDATED/DEPRECATED/INCORRECT] file:line - what it is | Current: correct approach | Source: URL`. No findings is valid.
+**Prompt:** In `[CWD]`, detect the main framework ([STACK]). Read key source files to find framework usage patterns. Use `web_fetch` to check official docs for current recommended patterns. Compare. Only report: OUTDATED (old patterns with verified better alternatives), DEPRECATED (APIs marked deprecated in official docs), or INCORRECT (contradicts docs). Output: `[OUTDATED/DEPRECATED/INCORRECT] file:line - what it is | Current: correct approach | Source: URL`. No findings is valid.
 
 ### Task 2 — Dependencies/Libraries
 **Title:** Check for deprecated library APIs
-**Prompt:** In `[CWD]`, read dependency files and scan source for library API calls. Use `web_search` to check if any APIs used are deprecated in current versions. Use `mcp__grep__searchGitHub` to see how modern codebases use these same libraries. Only report DEPRECATED or OUTDATED usage. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
+**Prompt:** In `[CWD]`, read dependency files and scan source for library API calls. Use `web_fetch` to check if any APIs used are deprecated in current versions. Use `mcp__grep__searchGitHub` to see how modern codebases use these same libraries. Only report DEPRECATED or OUTDATED usage. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
 
 ### Task 3 — Language Patterns
 **Title:** Verify language idioms are current
@@ -22,23 +27,23 @@ Replace `[CWD]` with the actual working directory and `[STACK]` with detected st
 
 ### Task 4 — Configuration
 **Title:** Verify build/lint/config settings
-**Prompt:** In `[CWD]`, read all config files (tsconfig, eslint, webpack/vite, etc.). Use `web_search` to check current tool documentation for recommended settings. Report only settings that are DEPRECATED or INCORRECT per official docs. Output: `[DEPRECATED/INCORRECT] file:line - what it is | Current: correct setting | Source: URL`. No findings is valid.
+**Prompt:** In `[CWD]`, read all config files (tsconfig, eslint, webpack/vite, etc.). Use `web_fetch` to check current tool documentation for recommended settings. Report only settings that are DEPRECATED or INCORRECT per official docs. Output: `[DEPRECATED/INCORRECT] file:line - what it is | Current: correct setting | Source: URL`. No findings is valid.
 
 ### Task 5 — Security Patterns
 **Title:** Verify security patterns
-**Prompt:** In `[CWD]`, review auth implementation, data handling, secrets management. Use `web_search` to check against current OWASP guidance and security best practices. Only report verifiable security anti-patterns — not theoretical risks. Output: `[OUTDATED/INCORRECT] file:line - what it is | Current: correct approach | Source: URL`. No findings is valid.
+**Prompt:** In `[CWD]`, review auth implementation, data handling, secrets management. Use `web_fetch` to check against current OWASP guidance and security best practices. Only report verifiable security anti-patterns — not theoretical risks. Output: `[OUTDATED/INCORRECT] file:line - what it is | Current: correct approach | Source: URL`. No findings is valid.
 
 ### Task 6 — Testing
 **Title:** Verify testing patterns are current
-**Prompt:** In `[CWD]`, identify the test framework and read test files. Use `web_search` to verify testing patterns match current library recommendations. Use `mcp__grep__searchGitHub` to compare against modern test patterns. Only report DEPRECATED or OUTDATED testing approaches. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
+**Prompt:** In `[CWD]`, identify the test framework and read test files. Use `web_fetch` to verify testing patterns match current library recommendations. Use `mcp__grep__searchGitHub` to compare against modern test patterns. Only report DEPRECATED or OUTDATED testing approaches. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
 
 ### Task 7 — API/Data Handling
 **Title:** Verify data fetching/state patterns
-**Prompt:** In `[CWD]`, review data fetching, state management, and storage patterns. Use `mcp__grep__searchGitHub` and `web_search` to verify against current framework recommendations. Only report OUTDATED or DEPRECATED patterns with evidence. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
+**Prompt:** In `[CWD]`, review data fetching, state management, and storage patterns. Use `mcp__grep__searchGitHub` and `web_fetch` to verify against current framework recommendations. Only report OUTDATED or DEPRECATED patterns with evidence. Output: `[OUTDATED/DEPRECATED] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
 
 ### Task 8 — Error Handling
 **Title:** Verify error handling patterns
-**Prompt:** In `[CWD]`, examine error handling patterns across the codebase. Use `mcp__grep__searchGitHub` to compare against real-world implementations. Use `web_search` to check library documentation for recommended error handling. Only report INCORRECT patterns that contradict docs. Output: `[INCORRECT] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
+**Prompt:** In `[CWD]`, examine error handling patterns across the codebase. Use `mcp__grep__searchGitHub` to compare against real-world implementations. Use `web_fetch` to check library documentation for recommended error handling. Only report INCORRECT patterns that contradict docs. Output: `[INCORRECT] file:line - what it is | Current: correct approach | Source: URL or GitHub search`. No findings is valid.
 
 ## After All Tasks Complete
 
