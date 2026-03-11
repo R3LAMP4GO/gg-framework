@@ -803,7 +803,9 @@ export function InputArea({
       {/* Queue hint — shown when agent is running and user has typed something */}
       {isAgentRunning && !disabled && value.length > 0 && !imageStatus && (
         <Box paddingLeft={1}>
-          <Text color={theme.warning ?? theme.accent}>{"⏳ Enter to queue — will send after current task"}</Text>
+          <Text color={theme.warning ?? theme.accent}>
+            {"⏳ Enter to queue — will send after current task"}
+          </Text>
         </Box>
       )}
       {/* Hints — shown when input is empty and not disabled */}
@@ -813,19 +815,13 @@ export function InputArea({
             <Text color={theme.textDim}>{"Type to queue a message…"}</Text>
           ) : (
             <>
-              <Text color={theme.textDim}>
-                {"⌥Tab "}
-              </Text>
+              <Text color={theme.textDim}>{"⌥Tab "}</Text>
               <Text color={theme.border}>{"plan"}</Text>
               <Text color={theme.textDim}>{" · "}</Text>
-              <Text color={theme.textDim}>
-                {"⇧` "}
-              </Text>
+              <Text color={theme.textDim}>{"⇧` "}</Text>
               <Text color={theme.border}>{"tasks"}</Text>
               <Text color={theme.textDim}>{" · "}</Text>
-              <Text color={theme.textDim}>
-                {"/ "}
-              </Text>
+              <Text color={theme.textDim}>{"/ "}</Text>
               <Text color={theme.border}>{"commands"}</Text>
             </>
           )}

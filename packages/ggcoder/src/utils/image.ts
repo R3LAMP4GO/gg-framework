@@ -5,7 +5,16 @@ import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"]);
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tiff",
+  ".tif",
+]);
 const TEXT_EXTENSIONS = new Set([".md", ".txt"]);
 const ATTACHABLE_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...TEXT_EXTENSIONS]);
 
@@ -43,22 +52,32 @@ export interface ImageAttachment {
 /** Detect image media type from raw buffer magic bytes. */
 export function detectMediaType(buffer: Buffer): string {
   if (buffer.length < 4) return "image/png";
-  if (buffer[0] === 137 && buffer[1] === 80 && buffer[2] === 78 && buffer[3] === 71) return "image/png";
+  if (buffer[0] === 137 && buffer[1] === 80 && buffer[2] === 78 && buffer[3] === 71)
+    return "image/png";
   if (buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return "image/jpeg";
   if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
   if (
     buffer.length >= 12 &&
-    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
-  ) return "image/webp";
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  )
+    return "image/webp";
   if (buffer[0] === 0x42 && buffer[1] === 0x4d) return "image/bmp";
   if (
     (buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2a && buffer[3] === 0x00) ||
     (buffer[0] === 0x4d && buffer[1] === 0x4d && buffer[2] === 0x00 && buffer[3] === 0x2a)
-  ) return "image/tiff";
+  )
+    return "image/tiff";
   return "image/png";
 }
 
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 async function loadSharp(): Promise<typeof import("sharp") | null> {
   try {
     return (await import("sharp")).default;
@@ -73,7 +92,10 @@ interface ProcessedImage {
   dimensions?: ImageDimensions;
 }
 
-export async function processImage(buffer: Buffer, _originalFormat?: string): Promise<ProcessedImage> {
+export async function processImage(
+  buffer: Buffer,
+  _originalFormat?: string,
+): Promise<ProcessedImage> {
   const sharp = await loadSharp();
   const detectedType = detectMediaType(buffer);
   const format = detectedType.split("/")[1] === "jpeg" ? "jpeg" : detectedType.split("/")[1];
@@ -83,11 +105,15 @@ export async function processImage(buffer: Buffer, _originalFormat?: string): Pr
   const metadata = await sharp(buffer).metadata();
   const resolvedFormat = metadata.format === "jpg" ? "jpeg" : (metadata.format ?? format);
   const mediaType =
-    resolvedFormat === "jpeg" ? "image/jpeg"
-    : resolvedFormat === "png" ? "image/png"
-    : resolvedFormat === "webp" ? "image/webp"
-    : resolvedFormat === "gif" ? "image/gif"
-    : detectedType;
+    resolvedFormat === "jpeg"
+      ? "image/jpeg"
+      : resolvedFormat === "png"
+        ? "image/png"
+        : resolvedFormat === "webp"
+          ? "image/webp"
+          : resolvedFormat === "gif"
+            ? "image/gif"
+            : detectedType;
 
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
@@ -103,8 +129,16 @@ export async function processImage(buffer: Buffer, _originalFormat?: string): Pr
   let displayWidth = width;
   let displayHeight = height;
 
-  if (buffer.length <= MAX_IMAGE_BYTES && displayWidth <= MAX_DIMENSION && displayHeight <= MAX_DIMENSION) {
-    return { buffer, mediaType, dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+  if (
+    buffer.length <= MAX_IMAGE_BYTES &&
+    displayWidth <= MAX_DIMENSION &&
+    displayHeight <= MAX_DIMENSION
+  ) {
+    return {
+      buffer,
+      mediaType,
+      dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+    };
   }
 
   const needsResize = displayWidth > MAX_DIMENSION || displayHeight > MAX_DIMENSION;
@@ -112,15 +146,25 @@ export async function processImage(buffer: Buffer, _originalFormat?: string): Pr
 
   if (!needsResize && buffer.length > MAX_IMAGE_BYTES) {
     if (isPng) {
-      const pngCompressed = await sharp(buffer).png({ compressionLevel: 9, palette: true }).toBuffer();
+      const pngCompressed = await sharp(buffer)
+        .png({ compressionLevel: 9, palette: true })
+        .toBuffer();
       if (pngCompressed.length <= MAX_IMAGE_BYTES) {
-        return { buffer: pngCompressed, mediaType: "image/png", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+        return {
+          buffer: pngCompressed,
+          mediaType: "image/png",
+          dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+        };
       }
     }
     for (const quality of [80, 60, 40, 20]) {
       const jpegBuf = await sharp(buffer).jpeg({ quality }).toBuffer();
       if (jpegBuf.length <= MAX_IMAGE_BYTES) {
-        return { buffer: jpegBuf, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+        return {
+          buffer: jpegBuf,
+          mediaType: "image/jpeg",
+          dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+        };
       }
     }
   }
@@ -134,29 +178,61 @@ export async function processImage(buffer: Buffer, _originalFormat?: string): Pr
     displayHeight = MAX_DIMENSION;
   }
 
-  const resized = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).toBuffer();
+  const resized = await sharp(buffer)
+    .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
+    .toBuffer();
   if (resized.length <= MAX_IMAGE_BYTES) {
-    return { buffer: resized, mediaType, dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+    return {
+      buffer: resized,
+      mediaType,
+      dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+    };
   }
 
   if (isPng) {
-    const pngCompressed = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).png({ compressionLevel: 9, palette: true }).toBuffer();
+    const pngCompressed = await sharp(buffer)
+      .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
+      .png({ compressionLevel: 9, palette: true })
+      .toBuffer();
     if (pngCompressed.length <= MAX_IMAGE_BYTES) {
-      return { buffer: pngCompressed, mediaType: "image/png", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+      return {
+        buffer: pngCompressed,
+        mediaType: "image/png",
+        dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+      };
     }
   }
 
   for (const quality of [80, 60, 40, 20]) {
-    const jpegBuf = await sharp(buffer).resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true }).jpeg({ quality }).toBuffer();
+    const jpegBuf = await sharp(buffer)
+      .resize(displayWidth, displayHeight, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality })
+      .toBuffer();
     if (jpegBuf.length <= MAX_IMAGE_BYTES) {
-      return { buffer: jpegBuf, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight } };
+      return {
+        buffer: jpegBuf,
+        mediaType: "image/jpeg",
+        dimensions: { originalWidth: width, originalHeight: height, displayWidth, displayHeight },
+      };
     }
   }
 
   const fallbackWidth = Math.min(displayWidth, 1000);
   const fallbackHeight = Math.round((displayHeight * fallbackWidth) / Math.max(displayWidth, 1));
-  const lastResort = await sharp(buffer).resize(fallbackWidth, fallbackHeight, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 20 }).toBuffer();
-  return { buffer: lastResort, mediaType: "image/jpeg", dimensions: { originalWidth: width, originalHeight: height, displayWidth: fallbackWidth, displayHeight: fallbackHeight } };
+  const lastResort = await sharp(buffer)
+    .resize(fallbackWidth, fallbackHeight, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 20 })
+    .toBuffer();
+  return {
+    buffer: lastResort,
+    mediaType: "image/jpeg",
+    dimensions: {
+      originalWidth: width,
+      originalHeight: height,
+      displayWidth: fallbackWidth,
+      displayHeight: fallbackHeight,
+    },
+  };
 }
 
 /** Check if a file path points to an image based on extension. */
@@ -292,8 +368,7 @@ export function getNoImageMessage(): string {
       "No image found in clipboard. Use Cmd + Ctrl + Shift + 4 to copy a screenshot to clipboard.",
     linux:
       "No image found in clipboard. Use appropriate screenshot tool to copy a screenshot to clipboard.",
-    win32:
-      "No image found in clipboard. Use Print Screen to copy a screenshot to clipboard.",
+    win32: "No image found in clipboard. Use Print Screen to copy a screenshot to clipboard.",
   };
   return messages[process.platform] ?? messages.linux;
 }
@@ -514,16 +589,6 @@ async function execSafe(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: 5000 });
-    return { exitCode: 0, stdout, stderr };
-  } catch (err: any) {
-    return {
-      exitCode: err.code ?? 1,
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? "",
-    };
-  }
-}
-, { timeout: 5000 });
     return { exitCode: 0, stdout, stderr };
   } catch (err: any) {
     return {

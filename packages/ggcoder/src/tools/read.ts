@@ -8,7 +8,14 @@ import { processImage } from "../utils/image.js";
 
 /** Image extensions that the read tool can render as image content blocks. */
 const IMAGE_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tiff",
+  ".tif",
 ]);
 
 export const BINARY_EXTENSIONS = new Set([

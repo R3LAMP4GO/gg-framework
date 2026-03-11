@@ -46,10 +46,9 @@ describe("createPlanModeManager", () => {
     expect(manager.state).toBe("reviewing");
     expect(manager.planContent).toBe("# My Plan\n\nDo stuff");
     expect(manager.planFilePath).toContain(".gg/plans/");
-    expect(fs.mkdir).toHaveBeenCalledWith(
-      expect.stringContaining(".gg/plans"),
-      { recursive: true },
-    );
+    expect(fs.mkdir).toHaveBeenCalledWith(expect.stringContaining(".gg/plans"), {
+      recursive: true,
+    });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expect.stringContaining(".gg/plans/"),
       "# My Plan\n\nDo stuff",
@@ -136,7 +135,11 @@ describe("checkPlanModeBlock", () => {
   });
 
   it("allows write to .gg/plans/ in planning state", () => {
-    const result = checkPlanModeBlock("write", { file_path: "/project/.gg/plans/plan.md" }, "planning");
+    const result = checkPlanModeBlock(
+      "write",
+      { file_path: "/project/.gg/plans/plan.md" },
+      "planning",
+    );
     expect(result).toBeNull();
   });
 
@@ -146,10 +149,16 @@ describe("checkPlanModeBlock", () => {
   });
 
   it("blocks write bash commands in planning state", () => {
-    expect(checkPlanModeBlock("bash", { command: "mkdir -p /tmp/foo" }, "planning")).toContain("read-only");
-    expect(checkPlanModeBlock("bash", { command: "rm -rf /tmp" }, "planning")).toContain("read-only");
+    expect(checkPlanModeBlock("bash", { command: "mkdir -p /tmp/foo" }, "planning")).toContain(
+      "read-only",
+    );
+    expect(checkPlanModeBlock("bash", { command: "rm -rf /tmp" }, "planning")).toContain(
+      "read-only",
+    );
     expect(checkPlanModeBlock("bash", { command: "git add ." }, "planning")).toContain("read-only");
-    expect(checkPlanModeBlock("bash", { command: "npm install express" }, "planning")).toContain("read-only");
+    expect(checkPlanModeBlock("bash", { command: "npm install express" }, "planning")).toContain(
+      "read-only",
+    );
   });
 
   it("allows read-only bash commands in planning state", () => {

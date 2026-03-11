@@ -45,7 +45,6 @@ export class MCPClientManager {
   }
 
   private async connectServer(config: MCPServerConfig): Promise<AgentTool[]> {
-
     const timeout = config.timeout ?? 30_000;
     let client: Client;
     let transport: StreamableHTTPClientTransport | SSEClientTransport | StdioClientTransport;
@@ -90,7 +89,9 @@ export class MCPClientManager {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).setRequestHandler?.(
       { method: "elicitation/create" },
-      async (request: { params?: { message?: string; requestedSchema?: unknown; mode?: string } }) => {
+      async (request: {
+        params?: { message?: string; requestedSchema?: unknown; mode?: string };
+      }) => {
         if (!this.elicitationHandler) {
           return { action: "cancel" as const };
         }
@@ -98,14 +99,24 @@ export class MCPClientManager {
         try {
           const result = await this.elicitationHandler({
             message: String(params.message ?? ""),
-            requestedSchema: params.requestedSchema as ElicitationHandler extends (p: infer P) => unknown ? P extends { requestedSchema?: infer S } ? S : undefined : undefined,
+            requestedSchema: params.requestedSchema as ElicitationHandler extends (
+              p: infer P,
+            ) => unknown
+              ? P extends { requestedSchema?: infer S }
+                ? S
+                : undefined
+              : undefined,
           });
           return {
             action: result.action,
             content: result.content,
           };
         } catch (err) {
-          log("ERROR", "mcp", `Elicitation handler error: ${err instanceof Error ? err.message : String(err)}`);
+          log(
+            "ERROR",
+            "mcp",
+            `Elicitation handler error: ${err instanceof Error ? err.message : String(err)}`,
+          );
           return { action: "cancel" as const };
         }
       },

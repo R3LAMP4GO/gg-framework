@@ -23,11 +23,7 @@ type Screen =
 
 // ── Banner ───────────────────────────────────────────────
 
-const AGENT_LOGO = [
-  " ▄▀▀▀ ▄▀▀▀",
-  " █ ▀█ █ ▀█",
-  " ▀▄▄▀ ▀▄▄▀",
-];
+const AGENT_LOGO = [" ▄▀▀▀ ▄▀▀▀", " █ ▀█ █ ▀█", " ▀▄▄▀ ▀▄▄▀"];
 
 const GRADIENT = [
   "#818cf8",
@@ -68,7 +64,19 @@ const TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
   { label: "Read-only tools", tools: ["read", "grep", "find", "ls"] },
   { label: "Edit tools", tools: ["edit", "write"] },
   { label: "Execution tools", tools: ["bash", "subagent"] },
-  { label: "Other tools", tools: ["web_fetch", "web_search", "tasks", "task_output", "task_stop", "ask_user_question", "enter_plan_mode", "exit_plan_mode"] },
+  {
+    label: "Other tools",
+    tools: [
+      "web_fetch",
+      "web_search",
+      "tasks",
+      "task_output",
+      "task_stop",
+      "ask_user_question",
+      "enter_plan_mode",
+      "exit_plan_mode",
+    ],
+  },
 ];
 
 const ALL_KNOWN_TOOLS = TOOL_CATEGORIES.flatMap((c) => c.tools);
@@ -79,7 +87,11 @@ const MODEL_OPTIONS = [
   { value: "sonnet", label: "Sonnet", desc: "Balanced performance — best for most agents" },
   { value: "opus", label: "Opus", desc: "Most capable for complex reasoning tasks" },
   { value: "haiku", label: "Haiku", desc: "Fast and efficient for simple tasks" },
-  { value: "inherit", label: "Inherit from parent", desc: "Use the same model as the main conversation" },
+  {
+    value: "inherit",
+    label: "Inherit from parent",
+    desc: "Use the same model as the main conversation",
+  },
 ];
 
 // ── Component ────────────────────────────────────────────
@@ -151,7 +163,11 @@ export function AgentsOverlay({
   const userAgentNames = new Set(userAgents.map((a) => a.name));
 
   // List items: [Create new] + user agents + builtin agents
-  const listItems: { kind: "create" | "user" | "builtin"; agent?: AgentDefinition; label: string }[] = [
+  const listItems: {
+    kind: "create" | "user" | "builtin";
+    agent?: AgentDefinition;
+    label: string;
+  }[] = [
     { kind: "create", label: "Create new agent" },
     ...userAgents.map((a) => ({
       kind: "user" as const,
@@ -166,9 +182,10 @@ export function AgentsOverlay({
   ];
 
   // Agent menu items
-  const agentMenuItems = selectedAgent?.source === "builtin"
-    ? ["View agent", "Back"]
-    : ["View agent", "Edit agent", "Delete agent", "Back"];
+  const agentMenuItems =
+    selectedAgent?.source === "builtin"
+      ? ["View agent", "Back"]
+      : ["View agent", "Edit agent", "Delete agent", "Back"];
 
   // ── Keyboard ───────────────────────────────────────────
 
@@ -188,7 +205,10 @@ export function AgentsOverlay({
               await createAgentFile(agentsDir, name);
               await reloadAgents();
               // Find the newly created agent
-              const newAgents = await discoverAgents({ globalAgentsDir: agentsDir, projectDir: cwd });
+              const newAgents = await discoverAgents({
+                globalAgentsDir: agentsDir,
+                projectDir: cwd,
+              });
               const created = newAgents.find((a) => a.name === name);
               if (created) {
                 setSelectedAgent(created);
@@ -390,7 +410,11 @@ export function AgentsOverlay({
       }
 
       // Items: [Save & back] + "All tools" + categories
-      const toolItems = ["Save & go back", "All tools (empty = inherit all)", ...TOOL_CATEGORIES.map((c) => c.label)];
+      const toolItems = [
+        "Save & go back",
+        "All tools (empty = inherit all)",
+        ...TOOL_CATEGORIES.map((c) => c.label),
+      ];
 
       if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
@@ -408,7 +432,10 @@ export function AgentsOverlay({
               try {
                 await updateAgentTools(selectedAgent.filePath!, [...editToolsSelection]);
                 await reloadAgents();
-                const newAgents = await discoverAgents({ globalAgentsDir: agentsDir, projectDir: cwd });
+                const newAgents = await discoverAgents({
+                  globalAgentsDir: agentsDir,
+                  projectDir: cwd,
+                });
                 const updated = newAgents.find((a) => a.name === selectedAgent.name);
                 if (updated) setSelectedAgent(updated);
                 showStatus("Tools updated");
@@ -472,7 +499,10 @@ export function AgentsOverlay({
             try {
               await updateAgentModel(selectedAgent.filePath!, option.value);
               await reloadAgents();
-              const newAgents = await discoverAgents({ globalAgentsDir: agentsDir, projectDir: cwd });
+              const newAgents = await discoverAgents({
+                globalAgentsDir: agentsDir,
+                projectDir: cwd,
+              });
               const updated = newAgents.find((a) => a.name === selectedAgent.name);
               if (updated) setSelectedAgent(updated);
               showStatus(`Model set to ${option.label}`);
@@ -492,7 +522,8 @@ export function AgentsOverlay({
   // ── Render ─────────────────────────────────────────────
 
   const home = process.env.HOME ?? "";
-  const displayAgentsDir = home && agentsDir.startsWith(home) ? "~" + agentsDir.slice(home.length) : agentsDir;
+  const displayAgentsDir =
+    home && agentsDir.startsWith(home) ? "~" + agentsDir.slice(home.length) : agentsDir;
 
   // ── List screen ──
   if (screen === "list") {
@@ -525,53 +556,55 @@ export function AgentsOverlay({
         {/* Name input */}
         {isNaming && (
           <Box marginBottom={1}>
-            <Text color={theme.accent}>  Agent name: </Text>
+            <Text color={theme.accent}> Agent name: </Text>
             <Text>{nameInput}</Text>
             <Text color={theme.textDim}>█</Text>
           </Box>
         )}
 
         {/* List */}
-        {!isNaming && listItems.map((item, idx) => {
-          const selected = idx === cursor;
-          const prefix = selected ? "❯ " : "  ";
+        {!isNaming &&
+          listItems.map((item, idx) => {
+            const selected = idx === cursor;
+            const prefix = selected ? "❯ " : "  ";
 
-          // Section headers
-          const sectionHeaders: React.ReactNode[] = [];
-          if (idx === 1 && userAgents.length > 0) {
-            sectionHeaders.push(
-              <Text key="user-header" color={theme.textDim} bold>
-                {"  User agents (" + displayAgentsDir + ")"}
-              </Text>,
-            );
-          }
-          if (idx === firstBuiltinIdx && firstBuiltinIdx > 0) {
-            sectionHeaders.push(
-              <Text key="builtin-header" color={theme.textDim} bold>
-                {"\n  Built-in agents (always available)"}
-              </Text>,
-            );
-          }
+            // Section headers
+            const sectionHeaders: React.ReactNode[] = [];
+            if (idx === 1 && userAgents.length > 0) {
+              sectionHeaders.push(
+                <Text key="user-header" color={theme.textDim} bold>
+                  {"  User agents (" + displayAgentsDir + ")"}
+                </Text>,
+              );
+            }
+            if (idx === firstBuiltinIdx && firstBuiltinIdx > 0) {
+              sectionHeaders.push(
+                <Text key="builtin-header" color={theme.textDim} bold>
+                  {"\n  Built-in agents (always available)"}
+                </Text>,
+              );
+            }
 
-          if (item.kind === "create") {
+            if (item.kind === "create") {
+              return (
+                <React.Fragment key="create">
+                  <Text color={selected ? theme.accent : theme.textDim} bold={selected}>
+                    {prefix}+ Create new agent
+                  </Text>
+                </React.Fragment>
+              );
+            }
+
             return (
-              <React.Fragment key="create">
-                <Text color={selected ? theme.accent : theme.textDim} bold={selected}>
-                  {prefix}+ Create new agent
+              <React.Fragment key={`${item.kind}-${item.agent?.name}`}>
+                {sectionHeaders}
+                <Text color={selected ? theme.primary : theme.text} bold={selected}>
+                  {prefix}
+                  {item.label}
                 </Text>
               </React.Fragment>
             );
-          }
-
-          return (
-            <React.Fragment key={`${item.kind}-${item.agent?.name}`}>
-              {sectionHeaders}
-              <Text color={selected ? theme.primary : theme.text} bold={selected}>
-                {prefix}{item.label}
-              </Text>
-            </React.Fragment>
-          );
-        })}
+          })}
 
         {status && <Text color={theme.success}>{" " + status}</Text>}
 
@@ -595,10 +628,12 @@ export function AgentsOverlay({
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.accent} bold>
-            {"  "}{selectedAgent?.name ?? "Agent"}
+            {"  "}
+            {selectedAgent?.name ?? "Agent"}
           </Text>
           <Text color={theme.textDim}>
-            {" · "}{selectedAgent?.source === "builtin" ? "built-in" : selectedAgent?.source}
+            {" · "}
+            {selectedAgent?.source === "builtin" ? "built-in" : selectedAgent?.source}
           </Text>
         </Box>
 
@@ -607,7 +642,8 @@ export function AgentsOverlay({
           const prefix = selected ? "❯ " : "  ";
           return (
             <Text key={item} color={selected ? theme.primary : theme.text} bold={selected}>
-              {prefix}{item}
+              {prefix}
+              {item}
             </Text>
           );
         })}
@@ -643,39 +679,53 @@ export function AgentsOverlay({
     const modelDisplay = agent.model || "Inherit from parent";
     const promptLines = agent.systemPrompt.split("\n");
     const maxPromptLines = 20;
-    const truncatedPrompt = promptLines.length > maxPromptLines
-      ? [...promptLines.slice(0, maxPromptLines), `... (${promptLines.length - maxPromptLines} more lines)`].join("\n")
-      : agent.systemPrompt;
+    const truncatedPrompt =
+      promptLines.length > maxPromptLines
+        ? [
+            ...promptLines.slice(0, maxPromptLines),
+            `... (${promptLines.length - maxPromptLines} more lines)`,
+          ].join("\n")
+        : agent.systemPrompt;
 
     return (
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.accent} bold>
-            {"  "}{agent.name}
+            {"  "}
+            {agent.name}
           </Text>
         </Box>
 
         {agent.filePath && (
-          <Text color={theme.textDim}>{"  File: "}{agent.filePath}</Text>
+          <Text color={theme.textDim}>
+            {"  File: "}
+            {agent.filePath}
+          </Text>
         )}
 
         <Box marginTop={1}>
           <Text>
-            <Text bold color={theme.text}>{"  Description: "}</Text>
+            <Text bold color={theme.text}>
+              {"  Description: "}
+            </Text>
             <Text color={theme.text}>{agent.description || "(none)"}</Text>
           </Text>
         </Box>
 
         <Box>
           <Text>
-            <Text bold color={theme.text}>{"  Tools: "}</Text>
+            <Text bold color={theme.text}>
+              {"  Tools: "}
+            </Text>
             <Text color={theme.text}>{toolsDisplay}</Text>
           </Text>
         </Box>
 
         <Box>
           <Text>
-            <Text bold color={theme.text}>{"  Model: "}</Text>
+            <Text bold color={theme.text}>
+              {"  Model: "}
+            </Text>
             <Text color={theme.text}>{modelDisplay}</Text>
           </Text>
         </Box>
@@ -683,14 +733,18 @@ export function AgentsOverlay({
         {agent.maxTurns && (
           <Box>
             <Text>
-              <Text bold color={theme.text}>{"  Max turns: "}</Text>
+              <Text bold color={theme.text}>
+                {"  Max turns: "}
+              </Text>
               <Text color={theme.text}>{String(agent.maxTurns)}</Text>
             </Text>
           </Box>
         )}
 
         <Box marginTop={1} flexDirection="column">
-          <Text bold color={theme.text}>{"  System prompt:"}</Text>
+          <Text bold color={theme.text}>
+            {"  System prompt:"}
+          </Text>
           <Text color={theme.textDim}>{"  " + truncatedPrompt.split("\n").join("\n  ")}</Text>
         </Box>
 
@@ -713,11 +767,13 @@ export function AgentsOverlay({
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.error} bold>
-            {"  Delete agent: "}{selectedAgent?.name}?
+            {"  Delete agent: "}
+            {selectedAgent?.name}?
           </Text>
         </Box>
         <Text color={theme.text}>
-          {"  This will delete the file: "}{selectedAgent?.filePath}
+          {"  This will delete the file: "}
+          {selectedAgent?.filePath}
         </Text>
         <Box marginTop={1}>
           <Text color={theme.textDim}>
@@ -743,7 +799,8 @@ export function AgentsOverlay({
         <Box flexDirection="column">
           <Box marginTop={1} marginBottom={1}>
             <Text color={theme.accent} bold>
-              {"  Edit agent: "}{selectedAgent.name}
+              {"  Edit agent: "}
+              {selectedAgent.name}
             </Text>
           </Box>
           <Text color={theme.warning}>{"  Cannot edit built-in agents."}</Text>
@@ -765,10 +822,12 @@ export function AgentsOverlay({
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.accent} bold>
-            {"  Edit agent: "}{selectedAgent?.name}
+            {"  Edit agent: "}
+            {selectedAgent?.name}
           </Text>
           <Text color={theme.textDim}>
-            {" · Source: "}{selectedAgent?.source}
+            {" · Source: "}
+            {selectedAgent?.source}
           </Text>
         </Box>
 
@@ -777,7 +836,8 @@ export function AgentsOverlay({
           const prefix = selected ? "❯ " : "  ";
           return (
             <Text key={item} color={selected ? theme.primary : theme.text} bold={selected}>
-              {prefix}{item}
+              {prefix}
+              {item}
             </Text>
           );
         })}
@@ -810,7 +870,9 @@ export function AgentsOverlay({
         label: `${cat.label} (${cat.tools.join(", ")})`,
         isAction: false,
         checked: cat.tools.every((t) => editToolsSelection.has(t)),
-        partial: cat.tools.some((t) => editToolsSelection.has(t)) && !cat.tools.every((t) => editToolsSelection.has(t)),
+        partial:
+          cat.tools.some((t) => editToolsSelection.has(t)) &&
+          !cat.tools.every((t) => editToolsSelection.has(t)),
       })),
     ];
 
@@ -818,7 +880,8 @@ export function AgentsOverlay({
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.accent} bold>
-            {"  Edit tools: "}{selectedAgent?.name}
+            {"  Edit tools: "}
+            {selectedAgent?.name}
           </Text>
         </Box>
 
@@ -828,7 +891,11 @@ export function AgentsOverlay({
 
           if (item.isAction) {
             return (
-              <Text key={item.label} color={selected ? theme.accent : theme.textDim} bold={selected}>
+              <Text
+                key={item.label}
+                color={selected ? theme.accent : theme.textDim}
+                bold={selected}
+              >
                 {prefix}[ {item.label} ]
               </Text>
             );
@@ -837,7 +904,8 @@ export function AgentsOverlay({
           const check = item.checked ? "⊠" : (item as { partial?: boolean }).partial ? "⊟" : "☐";
           return (
             <Text key={item.label} color={selected ? theme.primary : theme.text} bold={selected}>
-              {prefix}{check} {item.label}
+              {prefix}
+              {check} {item.label}
             </Text>
           );
         })}
@@ -876,7 +944,8 @@ export function AgentsOverlay({
       <Box flexDirection="column">
         <Box marginTop={1} marginBottom={1}>
           <Text color={theme.accent} bold>
-            {"  Edit model: "}{selectedAgent?.name}
+            {"  Edit model: "}
+            {selectedAgent?.name}
           </Text>
         </Box>
 
@@ -893,11 +962,13 @@ export function AgentsOverlay({
             return (
               <Box key={option.value} flexDirection="column">
                 <Text color={selected ? theme.primary : theme.text} bold={selected}>
-                  {prefix}{option.label}
+                  {prefix}
+                  {option.label}
                   {isCurrent && <Text color={theme.success}> ✓</Text>}
                 </Text>
                 <Text color={theme.textDim}>
-                  {"    "}{option.desc}
+                  {"    "}
+                  {option.desc}
                 </Text>
               </Box>
             );

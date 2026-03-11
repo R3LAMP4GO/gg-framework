@@ -97,9 +97,14 @@ export function parseSkillFile(raw: string, source: string): Skill {
         const value = line.slice(colonIndex + 1).trim();
         if (key === "name") name = value;
         else if (key === "description") description = value;
-        else if (key === "disablemodelinvocation") disableModelInvocation = value.toLowerCase() === "true";
+        else if (key === "disablemodelinvocation")
+          disableModelInvocation = value.toLowerCase() === "true";
         else if (key === "userinvocable") userInvocable = value.toLowerCase() !== "false";
-        else if (key === "allowedtools") allowedTools = value.split(",").map((t) => t.trim()).filter(Boolean);
+        else if (key === "allowedtools")
+          allowedTools = value
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
         else if (key === "argumenthint") argumentHint = value;
         else if (key === "model") model = value;
         else if (key === "context" && (value === "fork" || value === "inline")) context = value;
@@ -108,18 +113,26 @@ export function parseSkillFile(raw: string, source: string): Skill {
     }
   }
 
-  return { name, description, content, source, disableModelInvocation, userInvocable, allowedTools, argumentHint, model, context, agent };
+  return {
+    name,
+    description,
+    content,
+    source,
+    disableModelInvocation,
+    userInvocable,
+    allowedTools,
+    argumentHint,
+    model,
+    context,
+    agent,
+  };
 }
 
 /**
  * Apply string substitutions to skill content.
  * Supports $ARGUMENTS, $ARGUMENTS[N], $N, ${CLAUDE_SESSION_ID}.
  */
-export function applySkillSubstitutions(
-  content: string,
-  args: string,
-  sessionId?: string,
-): string {
+export function applySkillSubstitutions(content: string, args: string, sessionId?: string): string {
   const argParts = args.split(/\s+/).filter(Boolean);
 
   let result = content;

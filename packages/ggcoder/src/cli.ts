@@ -329,7 +329,13 @@ async function runInkTUI(opts: {
 
   // Build system prompt & tools (with sub-agent + plan mode support)
   const systemPrompt = opts.systemPrompt ?? (await buildSystemPrompt(cwd));
-  const { tools, processManager } = createTools(cwd, { agents, provider, model, planModeManager, skills });
+  const { tools, processManager } = createTools(cwd, {
+    agents,
+    provider,
+    model,
+    planModeManager,
+    skills,
+  });
 
   // Connect MCP servers
   const mcpManager = new MCPClientManager();

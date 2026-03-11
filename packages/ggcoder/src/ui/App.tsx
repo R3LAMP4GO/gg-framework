@@ -424,7 +424,9 @@ export function App(props: AppProps) {
   // ── Plan mode ──────────────────────────────────────────
   // Use the shared planModeManager from CLI (wired into tools) when provided,
   // so tool-level plan mode guards and UI state stay in sync.
-  const planManagerRef = useRef<PlanModeManager>(props.planModeManager ?? createPlanModeManager(props.cwd));
+  const planManagerRef = useRef<PlanModeManager>(
+    props.planModeManager ?? createPlanModeManager(props.cwd),
+  );
   const [planModeState, setPlanModeState] = useState<PlanModeState>("idle");
   const [showPlanReview, setShowPlanReview] = useState(false);
 
@@ -1119,9 +1121,9 @@ export function App(props: AppProps) {
       // Handle /copy — copy last assistant response to clipboard
       if (trimmed === "/copy") {
         const allItems = [...history, ...liveItems];
-        const lastAssistant = [...allItems]
-          .reverse()
-          .find((item) => item.kind === "assistant") as AssistantItem | undefined;
+        const lastAssistant = [...allItems].reverse().find((item) => item.kind === "assistant") as
+          | AssistantItem
+          | undefined;
         if (lastAssistant?.text) {
           try {
             await copyToClipboard(lastAssistant.text);
@@ -1312,7 +1314,12 @@ export function App(props: AppProps) {
               },
             ]);
           } catch (err: unknown) {
-            const execErr = err as { stdout?: string; stderr?: string; status?: number; message?: string };
+            const execErr = err as {
+              stdout?: string;
+              stderr?: string;
+              status?: number;
+              message?: string;
+            };
             const output = (execErr.stdout || "").trim();
             const stderr = (execErr.stderr || "").trim();
             const combined = [output, stderr].filter(Boolean).join("\n");
@@ -1346,7 +1353,9 @@ export function App(props: AppProps) {
             try {
               const content = await readFile(filePath, "utf-8");
               const lines = content.split("\n");
-              const numbered = lines.map((line, i) => `${String(i + 1).padStart(6, " ")}\t${line}`).join("\n");
+              const numbered = lines
+                .map((line, i) => `${String(i + 1).padStart(6, " ")}\t${line}`)
+                .join("\n");
               parts.push(`<file path="${mention}">\n${numbered}\n</file>`);
               log("INFO", "file-mention", `Loaded @${mention} (${lines.length} lines)`);
             } catch {
@@ -1431,7 +1440,11 @@ export function App(props: AppProps) {
         log("INFO", "queue", "Message queued — will send after current task completes");
         setLiveItems((prev) => [
           ...prev,
-          { kind: "info", text: `⏳ Message queued — will send after current task completes`, id: getId() },
+          {
+            kind: "info",
+            text: `⏳ Message queued — will send after current task completes`,
+            id: getId(),
+          },
         ]);
         return;
       }
@@ -2013,7 +2026,11 @@ export function App(props: AppProps) {
                 setPendingQuestions(null);
                 const count = Object.keys(answers).length;
                 log("INFO", "ask-user-question", `User accepted ${count} answer(s)`);
-                trackQuestion({ event: "question_answered", questionCount: count, outcome: "accept" });
+                trackQuestion({
+                  event: "question_answered",
+                  questionCount: count,
+                  outcome: "accept",
+                });
 
                 // Show a summary of answered questions (Claude Code style)
                 const answerLines = Object.entries(answers)
@@ -2025,10 +2042,7 @@ export function App(props: AppProps) {
                   })
                   .join("\n");
                 const summary = `● User answered GG Coder's questions:\n └${answerLines}`;
-                setLiveItems((prev) => [
-                  ...prev,
-                  { kind: "info", text: summary, id: getId() },
-                ]);
+                setLiveItems((prev) => [...prev, { kind: "info", text: summary, id: getId() }]);
 
                 resolve({ action: "accept", answers });
               }}
@@ -2036,14 +2050,22 @@ export function App(props: AppProps) {
                 const resolve = pendingQuestions.resolve;
                 setPendingQuestions(null);
                 log("INFO", "ask-user-question", "User declined questions");
-                trackQuestion({ event: "question_declined", questionCount: pendingQuestions.questions.length, outcome: "decline" });
+                trackQuestion({
+                  event: "question_declined",
+                  questionCount: pendingQuestions.questions.length,
+                  outcome: "decline",
+                });
                 resolve({ action: "decline", answers: {} });
               }}
               onCancel={() => {
                 const resolve = pendingQuestions.resolve;
                 setPendingQuestions(null);
                 log("INFO", "ask-user-question", "User cancelled questions");
-                trackQuestion({ event: "question_cancelled", questionCount: pendingQuestions.questions.length, outcome: "cancel" });
+                trackQuestion({
+                  event: "question_cancelled",
+                  questionCount: pendingQuestions.questions.length,
+                  outcome: "cancel",
+                });
                 resolve({ action: "cancel", answers: {} });
               }}
             />

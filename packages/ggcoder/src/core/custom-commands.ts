@@ -13,10 +13,7 @@ export interface CustomCommand {
 /**
  * Load .md files from a single commands directory.
  */
-async function loadCommandsFromDir(
-  dir: string,
-  sourceLabel: string,
-): Promise<CustomCommand[]> {
+async function loadCommandsFromDir(dir: string, sourceLabel: string): Promise<CustomCommand[]> {
   const commands: CustomCommand[] = [];
 
   let files: string[];
@@ -36,7 +33,8 @@ async function loadCommandsFromDir(
       const name = parsed.name || path.basename(file, ".md");
       commands.push({
         name,
-        description: parsed.description || `Custom command from ${sourceLabel} .gg/commands/${file}`,
+        description:
+          parsed.description || `Custom command from ${sourceLabel} .gg/commands/${file}`,
         prompt: parsed.content,
         filePath,
       });

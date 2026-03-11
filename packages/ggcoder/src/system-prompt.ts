@@ -16,7 +16,9 @@ export interface BuildSystemPromptOptions {
  */
 export function buildPlanModeReminder(planFilePath: string | null, isReentry: boolean): string {
   if (isReentry) {
-    const pathNote = planFilePath ? ` A plan file exists at ${planFilePath} from your previous session.` : "";
+    const pathNote = planFilePath
+      ? ` A plan file exists at ${planFilePath} from your previous session.`
+      : "";
     return (
       `## Re-entering Plan Mode\n\n` +
       `You are returning to plan mode.${pathNote} ` +
@@ -34,10 +36,14 @@ export function buildPlanModeReminder(planFilePath: string | null, isReentry: bo
 /**
  * Build a reminder message for when plan mode is exited.
  */
-export function buildPlanModeExitReminder(planFilePath: string | null, planExists: boolean): string {
-  const planRef = planExists && planFilePath
-    ? ` The plan file is located at ${planFilePath} if you need to reference it.`
-    : "";
+export function buildPlanModeExitReminder(
+  planFilePath: string | null,
+  planExists: boolean,
+): string {
+  const planRef =
+    planExists && planFilePath
+      ? ` The plan file is located at ${planFilePath} if you need to reference it.`
+      : "";
   return `Exited plan mode. You can now make edits, run tools, and take actions.${planRef}`;
 }
 
@@ -195,9 +201,9 @@ export async function buildSystemPrompt(
   if (planModeState === "planning") {
     sections.push(
       `<!-- plan-mode-reminder -->\n` +
-      `CRITICAL REMINDER: Plan mode is ACTIVE. Do NOT write/edit files. ` +
-      `Use exit_plan_mode to present your plan for user approval. ` +
-      `Do NOT use ask_user_question to ask about plan approval.`,
+        `CRITICAL REMINDER: Plan mode is ACTIVE. Do NOT write/edit files. ` +
+        `Use exit_plan_mode to present your plan for user approval. ` +
+        `Do NOT use ask_user_question to ask about plan approval.`,
     );
   }
 

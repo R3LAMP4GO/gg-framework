@@ -11,7 +11,13 @@ export interface SlashCommandContext {
   getModelList: () => string;
   quit: () => void;
   togglePlanMode?: (args?: string) => string;
-  getAgents?: () => { name: string; description: string; source: string; model?: string; tools: string[] }[];
+  getAgents?: () => {
+    name: string;
+    description: string;
+    source: string;
+    model?: string;
+    tools: string[];
+  }[];
 }
 
 export interface SlashCommand {
@@ -283,7 +289,12 @@ export function createBuiltinCommands(): SlashCommand[] {
 
         const groups: Record<string, typeof agents> = {};
         for (const a of agents) {
-          const label = a.source === "builtin" ? "Built-in" : a.source === "global" ? "User (~/.gg/agents/)" : "Project (.gg/agents/)";
+          const label =
+            a.source === "builtin"
+              ? "Built-in"
+              : a.source === "global"
+                ? "User (~/.gg/agents/)"
+                : "Project (.gg/agents/)";
           (groups[label] ??= []).push(a);
         }
 

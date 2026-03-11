@@ -211,9 +211,7 @@ export function PlanOverlay({
             })}
           </Box>
           <Box marginTop={0}>
-            <Text color={theme.textDim}>
-              {"← → to navigate · Enter to select · Esc to cancel"}
-            </Text>
+            <Text color={theme.textDim}>{"← → to navigate · Enter to select · Esc to cancel"}</Text>
           </Box>
         </Box>
       ) : phase === "editing" ? (

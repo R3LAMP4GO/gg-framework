@@ -40,11 +40,7 @@ export async function copyToClipboard(text: string): Promise<void> {
   log("INFO", "clipboard", `Copied ${text.length} chars to clipboard`);
 }
 
-async function tryClipboardCommand(
-  cmd: string,
-  args: string[],
-  text: string,
-): Promise<boolean> {
+async function tryClipboardCommand(cmd: string, args: string[], text: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       const proc = spawn(cmd, args, { stdio: ["pipe", "ignore", "ignore"] });

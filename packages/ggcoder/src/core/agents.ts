@@ -114,9 +114,15 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
         if (key === "name") name = value;
         else if (key === "description") description = value;
         else if (key === "tools") {
-          tools = value.split(",").map((t) => t.trim()).filter(Boolean);
+          tools = value
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
         } else if (key === "disallowedtools" || key === "disallowed-tools") {
-          disallowedTools = value.split(",").map((t) => t.trim()).filter(Boolean);
+          disallowedTools = value
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
         } else if (key === "model") model = value;
         else if (key === "maxturns" || key === "max-turns") {
           const parsed = parseInt(value, 10);
@@ -124,9 +130,18 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
         } else if (key === "background") {
           background = value.toLowerCase() === "true";
         } else if (key === "skills") {
-          skills = value.split(",").map((s) => s.trim()).filter(Boolean);
+          skills = value
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
         } else if (key === "permissionmode" || key === "permission-mode") {
-          const validModes: PermissionMode[] = ["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan"];
+          const validModes: PermissionMode[] = [
+            "default",
+            "acceptEdits",
+            "dontAsk",
+            "bypassPermissions",
+            "plan",
+          ];
           if (validModes.includes(value as PermissionMode)) {
             permissionMode = value as PermissionMode;
           }
@@ -135,7 +150,19 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
     }
   }
 
-  return { name, description, tools, disallowedTools, model, maxTurns, background, skills, permissionMode, systemPrompt, source };
+  return {
+    name,
+    description,
+    tools,
+    disallowedTools,
+    model,
+    maxTurns,
+    background,
+    skills,
+    permissionMode,
+    systemPrompt,
+    source,
+  };
 }
 
 // ── Write operations ──────────────────────────────────────

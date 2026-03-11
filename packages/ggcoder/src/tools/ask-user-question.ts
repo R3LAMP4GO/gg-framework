@@ -19,18 +19,12 @@ import { log } from "../core/logger.js";
 
 const OptionSchema = z.object({
   label: z.string().describe("Concise option text (1-5 words)"),
-  description: z
-    .string()
-    .describe("Explanation of implications and trade-offs"),
+  description: z.string().describe("Explanation of implications and trade-offs"),
 });
 
 const QuestionSchema = z.object({
-  question: z
-    .string()
-    .describe('Clear, specific question ending with "?"'),
-  header: z
-    .string()
-    .describe("Very short label shown as chip/tag (max 12 chars)"),
+  question: z.string().describe('Clear, specific question ending with "?"'),
+  header: z.string().describe("Very short label shown as chip/tag (max 12 chars)"),
   options: z
     .array(OptionSchema)
     .min(2)
@@ -38,9 +32,7 @@ const QuestionSchema = z.object({
     .describe(
       "Available choices (2-4 options). Do NOT include an 'Other' option — it is auto-generated.",
     ),
-  multiSelect: z
-    .boolean()
-    .describe("Set to true for non-mutually-exclusive choices"),
+  multiSelect: z.boolean().describe("Set to true for non-mutually-exclusive choices"),
 });
 
 // ── MCP-compatible field schemas ────────────────────────
@@ -120,10 +112,7 @@ const AskUserQuestionParams = z
     ),
     metadata: z
       .object({
-        source: z
-          .string()
-          .optional()
-          .describe('Source identifier, e.g. "remember"'),
+        source: z.string().optional().describe('Source identifier, e.g. "remember"'),
       })
       .optional(),
   })
@@ -195,8 +184,7 @@ export function createAskUserQuestionTool(): AgentTool<typeof AskUserQuestionPar
       }
 
       const qCount =
-        questions?.length ??
-        Object.keys(elicitation?.requestedSchema.properties ?? {}).length;
+        questions?.length ?? Object.keys(elicitation?.requestedSchema.properties ?? {}).length;
       log("INFO", "ask-user-question", `Asking ${qCount} question(s)`, {
         mode: questions ? "options" : "elicitation",
         source: metadata?.source ?? "agent",
@@ -221,9 +209,7 @@ export function createAskUserQuestionTool(): AgentTool<typeof AskUserQuestionPar
       }
 
       // action === "accept"
-      const parts = Object.entries(result.answers).map(
-        ([q, a]) => `"${q}"="${a}"`,
-      );
+      const parts = Object.entries(result.answers).map(([q, a]) => `"${q}"="${a}"`);
       log(
         "INFO",
         "ask-user-question",

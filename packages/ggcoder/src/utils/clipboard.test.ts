@@ -17,7 +17,9 @@ vi.mock("../core/logger.js", () => ({
 const { copyToClipboard } = await import("./clipboard.js");
 
 function createMockProcess(exitCode = 0): ChildProcess {
-  const proc = new EventEmitter() as ChildProcess & { stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> } };
+  const proc = new EventEmitter() as ChildProcess & {
+    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+  };
   proc.stdin = { write: vi.fn(), end: vi.fn() } as unknown as typeof proc.stdin;
   // Auto-emit close after a tick
   setTimeout(() => proc.emit("close", exitCode), 5);

@@ -154,18 +154,14 @@ export function QuestionOverlay({
   }, [states]);
 
   const allAnswered = answeredQuestions.every(Boolean);
-  const answeredCount = answeredQuestions.filter(Boolean).length;
 
-  const updateState = useCallback(
-    (idx: number, patch: Partial<QuestionState>) => {
-      setStates((prev) => {
-        const next = [...prev];
-        next[idx] = { ...next[idx], ...patch };
-        return next;
-      });
-    },
-    [],
-  );
+  const updateState = useCallback((idx: number, patch: Partial<QuestionState>) => {
+    setStates((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...patch };
+      return next;
+    });
+  }, []);
 
   // Navigate to next unanswered question (or submit tab)
   const advanceToNext = useCallback(() => {
@@ -216,19 +212,22 @@ export function QuestionOverlay({
 
   useInput(
     useCallback(
-      (input: string, key: {
-        return?: boolean;
-        backspace?: boolean;
-        delete?: boolean;
-        escape?: boolean;
-        upArrow?: boolean;
-        downArrow?: boolean;
-        leftArrow?: boolean;
-        rightArrow?: boolean;
-        ctrl?: boolean;
-        tab?: boolean;
-        shift?: boolean;
-      }) => {
+      (
+        input: string,
+        key: {
+          return?: boolean;
+          backspace?: boolean;
+          delete?: boolean;
+          escape?: boolean;
+          upArrow?: boolean;
+          downArrow?: boolean;
+          leftArrow?: boolean;
+          rightArrow?: boolean;
+          ctrl?: boolean;
+          tab?: boolean;
+          shift?: boolean;
+        },
+      ) => {
         // ── Escape: cancel entire wizard ──
         if (key.escape) {
           if (state?.editingOther) {
@@ -426,10 +425,23 @@ export function QuestionOverlay({
         }
       },
       [
-        state, currentTab, question, totalOptions, typeIdx, chatIdx, skipIdx,
-        isOnSubmitTab, submitSelectedIdx, totalTabs,
-        effectiveQuestions, updateState, onAccept, onDecline, onCancel,
-        buildAnswers, advanceToNext,
+        state,
+        currentTab,
+        question,
+        totalOptions,
+        typeIdx,
+        chatIdx,
+        skipIdx,
+        isOnSubmitTab,
+        submitSelectedIdx,
+        totalTabs,
+        effectiveQuestions,
+        updateState,
+        onAccept,
+        onDecline,
+        onCancel,
+        buildAnswers,
+        advanceToNext,
       ],
     ),
   );
@@ -439,12 +451,7 @@ export function QuestionOverlay({
   // ── Render ─────────────────────────────────────────────
 
   return (
-    <Box
-      flexDirection="column"
-      paddingLeft={1}
-      paddingRight={1}
-      marginTop={1}
-    >
+    <Box flexDirection="column" paddingLeft={1} paddingRight={1} marginTop={1}>
       {/* Tab bar: ← □ Stack □ Features ... ✓ Submit → */}
       <Box marginBottom={1} gap={0}>
         <Text color={theme.textDim}>{"← "}</Text>
@@ -460,11 +467,9 @@ export function QuestionOverlay({
                   {label}
                 </Text>
               ) : (
-                <Text color={isAnswered ? theme.text : theme.textDim}>
-                  {label}
-                </Text>
+                <Text color={isAnswered ? theme.text : theme.textDim}>{label}</Text>
               )}
-              <Text color={theme.textDim}>{" "}</Text>
+              <Text color={theme.textDim}> </Text>
             </Box>
           );
         })}
@@ -487,7 +492,9 @@ export function QuestionOverlay({
       {isOnSubmitTab ? (
         <Box flexDirection="column">
           <Box marginBottom={1}>
-            <Text color={theme.text} bold>Review your answers</Text>
+            <Text color={theme.text} bold>
+              Review your answers
+            </Text>
           </Box>
 
           {/* Answer summary — question → answer pairs */}
@@ -501,7 +508,9 @@ export function QuestionOverlay({
                 } else if (q.multiSelect) {
                   const selected = [...s.selectedSet]
                     .sort()
-                    .map((idx) => idx === q.options.length ? s.otherText.trim() : q.options[idx]?.label)
+                    .map((idx) =>
+                      idx === q.options.length ? s.otherText.trim() : q.options[idx]?.label,
+                    )
                     .filter(Boolean);
                   answerText = selected.join(", ") || "No selection";
                 } else if (s.selectedIdx === q.options.length) {
@@ -543,7 +552,10 @@ export function QuestionOverlay({
               <Text color={submitSelectedIdx === 0 ? theme.accent : theme.textDim}>
                 {submitSelectedIdx === 0 ? "❯ " : "  "}
               </Text>
-              <Text color={submitSelectedIdx === 0 ? theme.accent : theme.text} bold={submitSelectedIdx === 0}>
+              <Text
+                color={submitSelectedIdx === 0 ? theme.accent : theme.text}
+                bold={submitSelectedIdx === 0}
+              >
                 1. Submit answers
               </Text>
             </Box>
@@ -551,7 +563,10 @@ export function QuestionOverlay({
               <Text color={submitSelectedIdx === 1 ? theme.accent : theme.textDim}>
                 {submitSelectedIdx === 1 ? "❯ " : "  "}
               </Text>
-              <Text color={submitSelectedIdx === 1 ? theme.accent : theme.text} bold={submitSelectedIdx === 1}>
+              <Text
+                color={submitSelectedIdx === 1 ? theme.accent : theme.text}
+                bold={submitSelectedIdx === 1}
+              >
                 2. Cancel
               </Text>
             </Box>
@@ -608,7 +623,9 @@ export function QuestionOverlay({
             </Box>
             {state.editingOther && (
               <Box marginLeft={5}>
-                <Text color={theme.inputPrompt} bold>{"❯ "}</Text>
+                <Text color={theme.inputPrompt} bold>
+                  {"❯ "}
+                </Text>
                 <Text color={theme.text}>{state.otherText.slice(0, state.otherCursor)}</Text>
                 <Text inverse>
                   {state.otherCursor < state.otherText.length

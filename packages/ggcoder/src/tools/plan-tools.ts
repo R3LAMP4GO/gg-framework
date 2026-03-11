@@ -59,10 +59,14 @@ export function createEnterPlanModeTool(
 
 const ExitPlanModeParams = z.object({
   plan: z.string().describe("The complete implementation plan in markdown format"),
-  clear_context: z.boolean().optional().default(false).describe(
-    "Whether to compact the conversation after plan approval to save tokens for implementation. " +
-    "Recommended for long planning sessions."
-  ),
+  clear_context: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "Whether to compact the conversation after plan approval to save tokens for implementation. " +
+        "Recommended for long planning sessions.",
+    ),
 });
 
 export function createExitPlanModeTool(

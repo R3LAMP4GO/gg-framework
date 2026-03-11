@@ -78,5 +78,3 @@ function getHeader(name: string, input: unknown): { label: string; detail: strin
   }
   return { label: name, detail: "" };
 }
-
-

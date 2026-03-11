@@ -184,7 +184,9 @@ export async function buildFileStateAttachments(
     try {
       let content = await fs.readFile(filePath, "utf-8");
       if (content.length > maxCharsPerFile) {
-        content = content.slice(0, maxCharsPerFile) + `\n\n[... truncated, ${content.length - maxCharsPerFile} more chars]`;
+        content =
+          content.slice(0, maxCharsPerFile) +
+          `\n\n[... truncated, ${content.length - maxCharsPerFile} more chars]`;
       }
       parts.push(`### ${filePath}\n\`\`\`\n${content}\n\`\`\`\n`);
     } catch {
