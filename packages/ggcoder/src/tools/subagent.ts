@@ -188,7 +188,7 @@ export function createSubAgentTool(
       };
       context.signal.addEventListener("abort", abortHandler, { once: true });
 
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         // Read NDJSON from stdout
         const rl = createInterface({ input: child.stdout! });
         rl.on("line", (line) => {
@@ -258,10 +258,14 @@ export function createSubAgentTool(
           };
 
           if (code !== 0 && !textOutput) {
-            resolve({
-              content: `Sub-agent failed (exit ${code}): ${stderr.trim() || "unknown error"}`,
-              details,
-            });
+            reject(
+              Object.assign(
+                new Error(
+                  `Sub-agent failed (exit ${code}): ${stderr.trim() || "unknown error"}`,
+                ),
+                { details },
+              ),
+            );
             return;
           }
 
@@ -279,9 +283,7 @@ export function createSubAgentTool(
         child.on("error", (err) => {
           rl.close();
           context.signal.removeEventListener("abort", abortHandler);
-          resolve({
-            content: `Failed to spawn sub-agent: ${err.message}`,
-          });
+          reject(new Error(`Failed to spawn sub-agent: ${err.message}`));
         });
       });
     },

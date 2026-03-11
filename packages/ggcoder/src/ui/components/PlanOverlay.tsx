@@ -1,37 +1,39 @@
 /**
- * Plan review overlay — shown when the agent submits a plan for user review.
+ * Plan review — Claude Code-style inline plan display.
  *
- * Arrow-navigable actions (Claude Code-style):
- *   Approve  — execute the plan
- *   Edit     — open in editor
- *   Reject   — provide feedback, agent revises
- *   Cancel   — discard the plan entirely
+ * Shows the full plan content inline, followed by a numbered option selector:
+ *   1. Yes, clear context and bypass permissions
+ *   2. Yes, and bypass permissions
+ *   3. Yes, manually approve edits
+ *   4. Type here to tell GG Coder what to change
+ *
+ * Option 4 supports inline typing — just arrow down to it and start typing.
+ * Arrow up/down always navigates between options (even with text entered).
+ * Enter on option 4 submits the feedback. Text is preserved when navigating away.
  */
 
 import React, { useState, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTheme } from "../theme/theme.js";
+import path from "node:path";
 
-interface PlanOverlayProps {
+export interface PlanOverlayProps {
   planContent: string;
   planFilePath: string | null;
-  onApprove: () => void;
+  onApprove: (options: { clearContext: boolean }) => void;
   onReject: (feedback: string) => void;
   onCancel: () => void;
   onEdit: () => Promise<void>;
 }
 
-type Phase = "review" | "feedback" | "editing";
+const FEEDBACK_IDX = 3;
 
-const ACTIONS = ["approve", "edit", "reject", "cancel"] as const;
-type Action = (typeof ACTIONS)[number];
-
-const ACTION_LABELS: Record<Action, string> = {
-  approve: "Approve",
-  edit: "Edit",
-  reject: "Reject",
-  cancel: "Cancel",
-};
+const OPTIONS = [
+  "Yes, clear context and bypass permissions",
+  "Yes, and bypass permissions",
+  "Yes, manually approve edits",
+  "Type here to tell GG Coder what to change",
+] as const;
 
 export function PlanOverlay({
   planContent,
@@ -42,17 +44,12 @@ export function PlanOverlay({
   onEdit,
 }: PlanOverlayProps) {
   const theme = useTheme();
-  const [phase, setPhase] = useState<Phase>("review");
-  const [selectedAction, setSelectedAction] = useState(0);
+  const [editing, setEditing] = useState(false); // only for external editor
+  const [selected, setSelected] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [cursor, setCursor] = useState(0);
 
-  const actionColors: Record<Action, string> = {
-    approve: theme.success,
-    edit: theme.accent,
-    reject: theme.warning,
-    cancel: theme.error,
-  };
+  const isOnFeedback = selected === FEEDBACK_IDX;
 
   useInput(
     useCallback(
@@ -70,166 +67,190 @@ export function PlanOverlay({
           ctrl?: boolean;
         },
       ) => {
-        if (phase === "review") {
-          // Arrow navigation between actions
-          if (key.rightArrow || key.downArrow) {
-            setSelectedAction((i) => Math.min(ACTIONS.length - 1, i + 1));
-            return;
-          }
-          if (key.leftArrow || key.upArrow) {
-            setSelectedAction((i) => Math.max(0, i - 1));
-            return;
-          }
+        if (editing) return;
 
-          // Enter to execute selected action
-          if (key.return) {
-            const action = ACTIONS[selectedAction];
-            switch (action) {
-              case "approve":
-                onApprove();
-                break;
-              case "edit":
-                setPhase("editing");
-                onEdit().then(() => setPhase("review"));
-                break;
-              case "reject":
-                setPhase("feedback");
-                break;
-              case "cancel":
-                onCancel();
-                break;
-            }
-            return;
-          }
-
-          if (key.escape) {
-            onCancel();
-            return;
-          }
+        // ctrl-g opens editor
+        if (key.ctrl && input === "g") {
+          setEditing(true);
+          onEdit().then(() => setEditing(false));
           return;
         }
 
-        // Feedback input phase
-        if (key.escape) {
-          setPhase("review");
-          setFeedback("");
-          setCursor(0);
-          return;
-        }
-        if (key.return) {
-          if (feedback.trim()) {
-            onReject(feedback.trim());
-          }
-          return;
-        }
-        if (key.backspace || key.delete) {
-          if (cursor > 0) {
-            setFeedback((f) => f.slice(0, cursor - 1) + f.slice(cursor));
-            setCursor((c) => c - 1);
-          }
-          return;
-        }
-        if (key.leftArrow) {
-          setCursor((c) => Math.max(0, c - 1));
-          return;
-        }
-        if (key.rightArrow) {
-          setCursor((c) => Math.min(feedback.length, c + 1));
-          return;
-        }
         if (key.ctrl && input === "c") {
           onCancel();
           return;
         }
-        if (input) {
-          setFeedback((f) => f.slice(0, cursor) + input + f.slice(cursor));
-          setCursor((c) => c + input.length);
+
+        if (key.escape) {
+          if (isOnFeedback && feedback) {
+            // Clear feedback text first, then Esc again cancels
+            setFeedback("");
+            setCursor(0);
+            return;
+          }
+          onCancel();
+          return;
+        }
+
+        // ── Arrow up/down always navigates options ──
+        if (key.downArrow) {
+          setSelected((i) => Math.min(OPTIONS.length - 1, i + 1));
+          return;
+        }
+        if (key.upArrow) {
+          setSelected((i) => Math.max(0, i - 1));
+          return;
+        }
+
+        // ── Enter: act on current selection ──
+        if (key.return) {
+          switch (selected) {
+            case 0:
+              onApprove({ clearContext: true });
+              break;
+            case 1:
+              onApprove({ clearContext: false });
+              break;
+            case 2:
+              onApprove({ clearContext: false });
+              break;
+            case FEEDBACK_IDX:
+              if (feedback.trim()) {
+                onReject(feedback.trim());
+              }
+              break;
+          }
+          return;
+        }
+
+        // ── When on the feedback option, handle inline text editing ──
+        if (isOnFeedback) {
+          if (key.backspace || key.delete) {
+            if (cursor > 0) {
+              setFeedback((f) => f.slice(0, cursor - 1) + f.slice(cursor));
+              setCursor((c) => c - 1);
+            }
+            return;
+          }
+          if (key.leftArrow) {
+            setCursor((c) => Math.max(0, c - 1));
+            return;
+          }
+          if (key.rightArrow) {
+            setCursor((c) => Math.min(feedback.length, c + 1));
+            return;
+          }
+          if (input && !key.ctrl) {
+            setFeedback((f) => f.slice(0, cursor) + input + f.slice(cursor));
+            setCursor((c) => c + input.length);
+            return;
+          }
+        }
+
+        // ── Number keys for quick selection (only when not on feedback or feedback is empty) ──
+        if (!isOnFeedback || !feedback) {
+          if (input >= "1" && input <= "4") {
+            const idx = parseInt(input, 10) - 1;
+            setSelected(idx);
+            return;
+          }
         }
       },
-      [phase, feedback, cursor, selectedAction, onApprove, onReject, onCancel, onEdit],
+      [feedback, cursor, selected, isOnFeedback, editing, onApprove, onReject, onCancel, onEdit],
     ),
   );
 
-  // Show at most 30 lines of the plan to keep the overlay manageable
-  const planLines = planContent.split("\n");
-  const maxLines = 30;
-  const truncatedPlan =
-    planLines.length > maxLines
-      ? planLines.slice(0, maxLines).join("\n") +
-        `\n\n... (${planLines.length - maxLines} more lines)`
-      : planContent;
+  const planFileName = planFilePath ? path.basename(planFilePath) : null;
+
+  // Render the feedback text with cursor for option 4
+  const renderFeedbackText = () => {
+    if (!feedback && !isOnFeedback) return null;
+    const before = feedback.slice(0, cursor);
+    const after = feedback.slice(cursor);
+    return (
+      <Box>
+        <Text color={theme.textDim}>{"     "}</Text>
+        <Text color={theme.text}>{before}</Text>
+        {isOnFeedback ? <Text inverse>{after[0] ?? " "}</Text> : null}
+        {isOnFeedback && after.length > 1 ? <Text color={theme.text}>{after.slice(1)}</Text> : null}
+        {!isOnFeedback && after ? <Text color={theme.text}>{after}</Text> : null}
+      </Box>
+    );
+  };
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor={theme.accent}
-      paddingLeft={1}
-      paddingRight={1}
-      paddingTop={1}
-      paddingBottom={1}
-    >
+    <Box flexDirection="column">
+      {/* Separator */}
+      <Box marginBottom={1}>
+        <Text color={theme.textDim}>{"─".repeat(72)}</Text>
+      </Box>
+
       {/* Header */}
       <Box marginBottom={1}>
-        <Text color={theme.accent} bold>
-          {"📋 Plan Ready for Review"}
-        </Text>
+        <Text color={theme.accent}>Here is GG Coder&apos;s plan:</Text>
       </Box>
 
-      {/* Plan content */}
-      <Box flexDirection="column" marginBottom={1}>
+      {/* Full plan content */}
+      <Box flexDirection="column" marginBottom={1} paddingLeft={1}>
         <Text color={theme.text} wrap="wrap">
-          {truncatedPlan}
+          {planContent}
         </Text>
       </Box>
 
-      {/* File path */}
-      {planFilePath && (
-        <Box marginBottom={1}>
-          <Text color={theme.textDim}>Saved to: {planFilePath}</Text>
-        </Box>
-      )}
+      {/* Separator */}
+      <Box marginBottom={1}>
+        <Text color={theme.textDim}>{"─".repeat(72)}</Text>
+      </Box>
 
-      {/* Actions */}
-      {phase === "review" ? (
-        <Box flexDirection="column">
-          <Box>
-            {ACTIONS.map((action, i) => {
-              const isSelected = i === selectedAction;
-              const color = actionColors[action];
-              return (
-                <Text
-                  key={action}
-                  color={isSelected ? theme.text : color}
-                  backgroundColor={isSelected ? color : undefined}
-                  bold={isSelected}
-                >
-                  {i > 0 ? "  " : ""}
-                  {` ${ACTION_LABELS[action]} `}
-                </Text>
-              );
-            })}
-          </Box>
-          <Box marginTop={0}>
-            <Text color={theme.textDim}>{"← → to navigate · Enter to select · Esc to cancel"}</Text>
-          </Box>
-        </Box>
-      ) : phase === "editing" ? (
+      {/* Prompt */}
+      <Box marginBottom={1}>
+        <Text color={theme.text}>
+          GG Coder has written up a plan and is ready to execute. Would you like to proceed?
+        </Text>
+      </Box>
+
+      {/* Options with inline feedback */}
+      {editing ? (
         <Box>
           <Text color={theme.accent}>Opening in editor…</Text>
         </Box>
       ) : (
         <Box flexDirection="column">
-          <Text color={theme.warning}>
-            Feedback for revision (Enter to submit, Esc to go back):
+          {OPTIONS.map((label, i) => {
+            const isSelected = i === selected;
+            const showFeedbackLabel = i === FEEDBACK_IDX && feedback;
+            return (
+              <Box key={i} flexDirection="column">
+                <Box>
+                  <Text color={isSelected ? theme.accent : theme.textDim}>
+                    {isSelected ? "❯ " : "  "}
+                  </Text>
+                  <Text color={isSelected ? theme.text : theme.textDim} bold={isSelected}>
+                    {`${i + 1}. ${showFeedbackLabel ? "Tell GG Coder what to change:" : label}`}
+                  </Text>
+                </Box>
+                {i === FEEDBACK_IDX && (feedback || isOnFeedback) ? renderFeedbackText() : null}
+              </Box>
+            );
+          })}
+          {isOnFeedback && (
+            <Box marginTop={0}>
+              <Text color={theme.textDim}>
+                {"  "}
+                {feedback ? "Enter to submit · " : ""}Esc to {feedback ? "clear" : "cancel"} ·
+                ↑↓ to pick another option
+              </Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Footer — file path + edit hint */}
+      {planFilePath && !editing && (
+        <Box marginTop={1}>
+          <Text color={theme.textDim}>
+            ctrl-g to edit in VS Code · {planFileName}
           </Text>
-          <Box>
-            <Text color={theme.inputPrompt} bold>
-              {"❯ "}
-            </Text>
-            <Text color={theme.text}>{feedback}</Text>
-            <Text inverse> </Text>
-          </Box>
         </Box>
       )}
     </Box>

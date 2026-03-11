@@ -67,10 +67,13 @@ Authentication:
 `.trim();
 
 function main(): void {
-  // Silent auto-update check (throttled, non-blocking on failure)
-  const updateMessage = checkAndAutoUpdate(CLI_VERSION);
-  if (updateMessage) {
-    console.error(chalk.hex("#60a5fa")(updateMessage));
+  // Silent auto-update check (throttled, non-blocking on failure).
+  // Skip for subagent processes — the parent already handles updates.
+  if (process.env.GG_IS_SUBAGENT !== "1") {
+    const updateMessage = checkAndAutoUpdate(CLI_VERSION);
+    if (updateMessage) {
+      console.error(chalk.hex("#60a5fa")(updateMessage));
+    }
   }
 
   // Handle subcommands before parseArgs

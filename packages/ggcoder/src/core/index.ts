@@ -24,7 +24,7 @@ export {
   type SlashCommandContext,
 } from "./slash-commands.js";
 export { discoverSkills, parseSkillFile, formatSkillsForPrompt, type Skill } from "./skills.js";
-export { BUILTIN_AGENTS, getExploreModel } from "./builtin-agents.js";
+export { BUILTIN_AGENTS } from "./builtin-agents.js";
 export { ExtensionLoader } from "./extensions/loader.js";
 export type { Extension, ExtensionContext, ExtensionFactory } from "./extensions/types.js";
 export { shouldCompact, compact, type CompactionResult } from "./compaction/compactor.js";

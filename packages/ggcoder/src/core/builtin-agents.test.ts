@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   BUILTIN_AGENTS,
-  getExploreModel,
   applyCommonSuffix,
   SUBAGENT_SUFFIX,
   STANDALONE_SUFFIX,
@@ -126,20 +125,6 @@ describe("BUILTIN_AGENTS", () => {
     it("system prompt limits report to 500 words", () => {
       expect(fork.systemPrompt).toContain("500 words");
     });
-  });
-});
-
-describe("getExploreModel", () => {
-  it("returns haiku for anthropic", () => {
-    expect(getExploreModel("anthropic", "claude-opus-4-6")).toBe("claude-haiku-4-5");
-  });
-
-  it("returns o4-mini for openai", () => {
-    expect(getExploreModel("openai", "gpt-5")).toBe("o4-mini");
-  });
-
-  it("returns parent model for unknown provider", () => {
-    expect(getExploreModel("unknown", "some-model")).toBe("some-model");
   });
 });
 

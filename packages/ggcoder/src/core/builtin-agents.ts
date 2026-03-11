@@ -229,25 +229,6 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
 // ── Model mapping ─────────────────────────────────────────
 
 /**
- * Return the cheapest/fastest model for the explore agent.
- * Falls back to parent model if provider is unknown.
- */
-export function getExploreModel(provider: string, parentModel: string): string {
-  switch (provider) {
-    case "anthropic":
-      return "claude-haiku-4-5";
-    case "openai":
-      return "o4-mini";
-    case "glm":
-      return "glm-4.7";
-    case "moonshot":
-      return "kimi-k2.5";
-    default:
-      return parentModel;
-  }
-}
-
-/**
  * Resolve the model for an agent based on its model hint.
  * - "haiku" / "cheapest": cheapest model for the provider
  * - "sonnet" / "mid": mid-tier model for the provider

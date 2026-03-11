@@ -1943,7 +1943,7 @@ export function App(props: AppProps) {
             <PlanOverlay
               planContent={planManagerRef.current.planContent}
               planFilePath={planManagerRef.current.planFilePath}
-              onApprove={() => {
+              onApprove={({ clearContext }) => {
                 const pm = planManagerRef.current;
                 const plan = pm.planContent ?? "";
                 pm.approve();
@@ -1951,10 +1951,20 @@ export function App(props: AppProps) {
                   ...prev,
                   { kind: "info", text: "✅ Plan approved — executing…", id: getId() },
                 ]);
-                // Resume the agent loop to execute the approved plan
-                void agentLoop.run(
-                  `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
-                );
+                if (clearContext) {
+                  // Compact the conversation first, then resume
+                  void compactConversation(messagesRef.current).then((compacted) => {
+                    messagesRef.current = compacted;
+                    void agentLoop.run(
+                      `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
+                    );
+                  });
+                } else {
+                  // Resume the agent loop to execute the approved plan
+                  void agentLoop.run(
+                    `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
+                  );
+                }
               }}
               onReject={(feedback) => {
                 const pm = planManagerRef.current;
