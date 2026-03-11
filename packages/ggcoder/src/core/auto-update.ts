@@ -13,26 +13,34 @@ interface UpdateState {
   lastSeenVersion?: string;
 }
 
-enum PackageManager {
-  NPM = "npm",
-  PNPM = "pnpm",
-  YARN = "yarn",
-  UNKNOWN = "unknown",
-}
-
-interface InstallInfo {
-  packageManager: PackageManager;
-  updateCommand: string | null;
+interface SyncState {
+  lastSyncAt: number;
+  lastResult: string;
+  version?: string;
+  conflictOriginHead?: string;
 }
 
 function getStateFilePath(): string {
   return path.join(os.homedir(), ".gg", "update-state.json");
 }
 
+function getSyncStateFilePath(): string {
+  return path.join(os.homedir(), ".gg", "sync-state.json");
+}
+
 function readState(): UpdateState | null {
   try {
     const raw = fs.readFileSync(getStateFilePath(), "utf-8");
     return JSON.parse(raw) as UpdateState;
+  } catch {
+    return null;
+  }
+}
+
+function readSyncState(): SyncState | null {
+  try {
+    const raw = fs.readFileSync(getSyncStateFilePath(), "utf-8");
+    return JSON.parse(raw) as SyncState;
   } catch {
     return null;
   }
@@ -64,31 +72,93 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * Detect whether ggcoder is running from an npm-linked local repo
+ * (i.e. the binary resolves into the local git checkout, not node_modules).
+ */
+function isLinkedLocalRepo(): string | null {
+  try {
+    const scriptPath = (process.argv[1] ?? "").replace(/\\/g, "/");
+    // The linked path looks like: /Users/.../ggcoder/packages/ggcoder/dist/cli.js
+    const match = scriptPath.match(/^(.+\/ggcoder)\/packages\/ggcoder\/dist\/cli\.js$/);
+    if (!match) return null;
+    const repoRoot = match[1];
+    // Verify it's actually a git repo with origin pointing at Ken's repo
+    if (!fs.existsSync(path.join(repoRoot, ".git"))) return null;
+    return repoRoot;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * For linked local repos: kick off the sync script in the background.
+ * The script handles fetch, merge, rebuild, and re-link.
+ * Non-blocking — fires and forgets.
+ */
+function triggerGitSync(repoRoot: string): string | null {
+  const syncScript = path.join(repoRoot, "scripts", "sync-upstream.sh");
+  if (!fs.existsSync(syncScript)) return null;
+
+  // Check sync state for recent conflict warnings
+  const syncState = readSyncState();
+  if (syncState?.lastResult === "conflict") {
+    return `⚠️  Upstream merge has conflicts — run: cd ${repoRoot} && git merge origin/main`;
+  }
+
+  // Run sync in background (detached, no waiting)
+  try {
+    const child = spawnSync("bash", [syncScript], {
+      cwd: repoRoot,
+      stdio: "ignore",
+      timeout: 90_000, // 90s max for fetch+merge+build
+    });
+    if (child.status === 0) {
+      // Check if it actually updated
+      const newSyncState = readSyncState();
+      if (newSyncState?.lastResult === "updated" && newSyncState.version) {
+        return `Synced upstream → v${newSyncState.version}`;
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  return null;
+}
+
+// ── npm-based update (for non-linked installs) ───────────────
+
+enum PackageManager {
+  NPM = "npm",
+  PNPM = "pnpm",
+  YARN = "yarn",
+  UNKNOWN = "unknown",
+}
+
+interface InstallInfo {
+  packageManager: PackageManager;
+  updateCommand: string | null;
+}
+
 function detectInstallInfo(): InstallInfo {
   const scriptPath = (process.argv[1] ?? "").replace(/\\/g, "/");
 
-  // npx — skip (ephemeral)
   if (scriptPath.includes("/_npx/")) {
     return { packageManager: PackageManager.UNKNOWN, updateCommand: null };
   }
-
-  // pnpm global
   if (scriptPath.includes("/.pnpm") || scriptPath.includes("/pnpm/global")) {
     return {
       packageManager: PackageManager.PNPM,
       updateCommand: `pnpm add -g ${PACKAGE_NAME}@latest`,
     };
   }
-
-  // yarn global
   if (scriptPath.includes("/.yarn/") || scriptPath.includes("/yarn/global")) {
     return {
       packageManager: PackageManager.YARN,
       updateCommand: `yarn global add ${PACKAGE_NAME}@latest`,
     };
   }
-
-  // npm global (default)
   return {
     packageManager: PackageManager.NPM,
     updateCommand: `npm install -g ${PACKAGE_NAME}@latest`,
@@ -96,8 +166,6 @@ function detectInstallInfo(): InstallInfo {
 }
 
 function fetchLatestVersionSync(): string | null {
-  // Use a child process to fetch from npm registry with timeout
-  // We use node -e to avoid needing fetch in the parent process synchronously
   try {
     const script = `
       const c = new AbortController();
@@ -133,8 +201,11 @@ function performUpdate(command: string): boolean {
 }
 
 /**
- * Check for updates and silently auto-update if a newer version is available.
+ * Check for updates and auto-update if a newer version is available.
  * Called at CLI startup. Non-blocking on failure — the CLI always proceeds.
+ *
+ * For npm-linked local repos: uses git fetch + merge + rebuild.
+ * For standard npm installs: uses npm registry + npm install -g.
  *
  * Returns a message to display if an update happened, or null.
  */
@@ -142,9 +213,16 @@ export function checkAndAutoUpdate(currentVersion: string): string | null {
   try {
     if (!shouldCheck()) return null;
 
+    // If running from a linked local repo, use git-based sync
+    const repoRoot = isLinkedLocalRepo();
+    if (repoRoot) {
+      writeState({ lastCheckedAt: Date.now() });
+      return triggerGitSync(repoRoot);
+    }
+
+    // Standard npm-based update for published installs
     const latestVersion = fetchLatestVersionSync();
 
-    // Always record that we checked
     writeState({
       lastCheckedAt: Date.now(),
       lastSeenVersion: latestVersion ?? undefined,
@@ -162,7 +240,6 @@ export function checkAndAutoUpdate(currentVersion: string): string | null {
       return `Updated ${PACKAGE_NAME} ${currentVersion} \u2192 ${latestVersion}`;
     }
 
-    // Update failed — show manual instructions
     return `Update available: ${currentVersion} \u2192 ${latestVersion}\nRun: ${info.updateCommand}`;
   } catch {
     // Never block CLI startup
