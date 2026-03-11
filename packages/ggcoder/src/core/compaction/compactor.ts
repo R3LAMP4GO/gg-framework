@@ -127,9 +127,10 @@ function serializeMessageForSummary(msg: Message): string {
   // Handle tool result messages (role === "tool")
   if (role === "tool") {
     const results = msg.content as ToolResult[];
-    const parts = results.map(
-      (tr) => `[tool_result: ${truncateForSummary(tr.content, TOOL_RESULT_SUMMARY_MAX_CHARS)}]`,
-    );
+    const parts = results.map((tr) => {
+      const imgNote = tr.images?.length ? ` (+${tr.images.length} image(s))` : "";
+      return `[tool_result: ${truncateForSummary(tr.content, TOOL_RESULT_SUMMARY_MAX_CHARS)}${imgNote}]`;
+    });
     return `[${role}]: ${parts.join("\n")}`;
   }
 
@@ -138,6 +139,8 @@ function serializeMessageForSummary(msg: Message): string {
   for (const part of msg.content as ContentPart[]) {
     if ("text" in part && typeof part.text === "string") {
       parts.push(truncateForSummary(part.text, TOOL_RESULT_SUMMARY_MAX_CHARS));
+    } else if ("type" in part && part.type === "image") {
+      parts.push("[image attached]");
     } else if ("type" in part && part.type === "tool_call") {
       const tc = part as ContentPart & {
         type: "tool_call";

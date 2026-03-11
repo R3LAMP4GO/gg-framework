@@ -125,11 +125,11 @@ export function Footer({
     }
   }
 
-  // Mode indicators: thinking toggle (⇧⇹) + plan mode (^P)
+  // Mode indicators: thinking toggle
   const thinkingText = thinkingEnabled ? "Thinking on" : "Thinking off";
   const planText = planModeActive ? " · 📋 Plan" : "";
   const modeText = thinkingText + planText;
-  const modeLen = modeText.length + 3 + 8; // " │ " separator + " ⇧⇹ ^P"
+  const modeLen = modeText.length + 3; // " │ " separator
 
   // Truncate path if footer would overflow
   const rightLen =
@@ -176,7 +176,6 @@ export function Footer({
         {sep}
         <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
         {planModeActive && <Text color={theme.warning}>{" · 📋 Plan"}</Text>}
-        <Text color={theme.border}>{" ⇧⇹ ^⇹Plan"}</Text>
       </Box>
     </Box>
   );

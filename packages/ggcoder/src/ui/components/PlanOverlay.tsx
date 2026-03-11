@@ -1,10 +1,11 @@
 /**
  * Plan review overlay — shown when the agent submits a plan for user review.
  *
- * The user can:
- *   [a] approve — execute the plan
- *   [r] reject  — provide feedback, agent revises
- *   [c] cancel  — discard the plan entirely
+ * Arrow-navigable actions (Claude Code-style):
+ *   Approve  — execute the plan
+ *   Edit     — open in editor
+ *   Reject   — provide feedback, agent revises
+ *   Cancel   — discard the plan entirely
  */
 
 import React, { useState, useCallback } from "react";
@@ -22,6 +23,16 @@ interface PlanOverlayProps {
 
 type Phase = "review" | "feedback" | "editing";
 
+const ACTIONS = ["approve", "edit", "reject", "cancel"] as const;
+type Action = (typeof ACTIONS)[number];
+
+const ACTION_LABELS: Record<Action, string> = {
+  approve: "Approve",
+  edit: "Edit",
+  reject: "Reject",
+  cancel: "Cancel",
+};
+
 export function PlanOverlay({
   planContent,
   planFilePath,
@@ -32,8 +43,16 @@ export function PlanOverlay({
 }: PlanOverlayProps) {
   const theme = useTheme();
   const [phase, setPhase] = useState<Phase>("review");
+  const [selectedAction, setSelectedAction] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [cursor, setCursor] = useState(0);
+
+  const actionColors: Record<Action, string> = {
+    approve: theme.success,
+    edit: theme.accent,
+    reject: theme.warning,
+    cancel: theme.error,
+  };
 
   useInput(
     useCallback(
@@ -46,27 +65,44 @@ export function PlanOverlay({
           escape?: boolean;
           leftArrow?: boolean;
           rightArrow?: boolean;
+          upArrow?: boolean;
+          downArrow?: boolean;
           ctrl?: boolean;
         },
       ) => {
         if (phase === "review") {
-          const lower = input.toLowerCase();
-          if (lower === "a") {
-            onApprove();
+          // Arrow navigation between actions
+          if (key.rightArrow || key.downArrow) {
+            setSelectedAction((i) => Math.min(ACTIONS.length - 1, i + 1));
             return;
           }
-          if (lower === "r") {
-            setPhase("feedback");
+          if (key.leftArrow || key.upArrow) {
+            setSelectedAction((i) => Math.max(0, i - 1));
             return;
           }
-          if (lower === "g") {
-            setPhase("editing");
-            onEdit().then(() => {
-              setPhase("review");
-            });
+
+          // Enter to execute selected action
+          if (key.return) {
+            const action = ACTIONS[selectedAction];
+            switch (action) {
+              case "approve":
+                onApprove();
+                break;
+              case "edit":
+                setPhase("editing");
+                onEdit().then(() => setPhase("review"));
+                break;
+              case "reject":
+                setPhase("feedback");
+                break;
+              case "cancel":
+                onCancel();
+                break;
+            }
             return;
           }
-          if (lower === "c" || key.escape) {
+
+          if (key.escape) {
             onCancel();
             return;
           }
@@ -110,7 +146,7 @@ export function PlanOverlay({
           setCursor((c) => c + input.length);
         }
       },
-      [phase, feedback, cursor, onApprove, onReject, onCancel, onEdit],
+      [phase, feedback, cursor, selectedAction, onApprove, onReject, onCancel, onEdit],
     ),
   );
 
@@ -154,25 +190,31 @@ export function PlanOverlay({
         </Box>
       )}
 
-      {/* Actions or feedback input */}
+      {/* Actions */}
       {phase === "review" ? (
-        <Box>
-          <Text color={theme.success} bold>
-            [a]
-          </Text>
-          <Text color={theme.text}>pprove </Text>
-          <Text color={theme.warning} bold>
-            [r]
-          </Text>
-          <Text color={theme.text}>eject </Text>
-          <Text color={theme.accent} bold>
-            [g]
-          </Text>
-          <Text color={theme.text}> edit </Text>
-          <Text color={theme.error} bold>
-            [c]
-          </Text>
-          <Text color={theme.text}>ancel</Text>
+        <Box flexDirection="column">
+          <Box>
+            {ACTIONS.map((action, i) => {
+              const isSelected = i === selectedAction;
+              const color = actionColors[action];
+              return (
+                <Text
+                  key={action}
+                  color={isSelected ? theme.text : color}
+                  backgroundColor={isSelected ? color : undefined}
+                  bold={isSelected}
+                >
+                  {i > 0 ? "  " : ""}
+                  {` ${ACTION_LABELS[action]} `}
+                </Text>
+              );
+            })}
+          </Box>
+          <Box marginTop={0}>
+            <Text color={theme.textDim}>
+              {"← → to navigate · Enter to select · Esc to cancel"}
+            </Text>
+          </Box>
         </Box>
       ) : phase === "editing" ? (
         <Box>

@@ -196,6 +196,7 @@ export async function* agentLoop(
 
       let resultContent: string;
       let details: unknown;
+      let images: Array<{ type: "image"; mediaType: string; data: string }> | undefined;
       let isError = false;
 
       const tool = toolMap.get(toolCall.name);
@@ -220,6 +221,7 @@ export async function* agentLoop(
           const normalized = normalizeToolResult(raw);
           resultContent = normalized.content;
           details = normalized.details;
+          images = normalized.images;
         } catch (err) {
           isError = true;
           resultContent = err instanceof Error ? err.message : String(err);
@@ -237,7 +239,7 @@ export async function* agentLoop(
         durationMs,
       });
 
-      return { toolCallId: toolCall.id, content: resultContent, isError };
+      return { toolCallId: toolCall.id, content: resultContent, images, isError };
     });
 
     // Abort the tool event stream when the signal fires so Ctrl+C
@@ -254,6 +256,7 @@ export async function* agentLoop(
             type: "tool_result",
             toolCallId: tc.id,
             content: r.content,
+            images: r.images,
             isError: r.isError || undefined,
           });
         }

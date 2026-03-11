@@ -11,6 +11,7 @@ export type {
   ImageContent,
   ToolCall,
   ToolResult,
+  ToolResultImage,
   ServerToolCall,
   ServerToolResult,
   ServerToolDefinition,

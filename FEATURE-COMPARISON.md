@@ -53,8 +53,8 @@
 | `agent` frontmatter | ❌ | No agent selection per-skill |
 | `allowed-tools` | ❌ | No per-skill tool restrictions |
 | `argument-hint` | ❌ | No autocomplete hints |
-| `!` bash prefix | ❌ | No bash shortcut |
-| `@` file mention | ❌ | No file path autocomplete |
+| `!` bash prefix | ✅ | `!command` runs bash directly without agent |
+| `@` file mention | ✅ | `@path/to/file` loads file content into prompt |
 | MCP prompts as commands | ❌ | MCP tools work but prompts aren't surfaced |
 | `/agents` interactive manager | ❌ | No interactive agent CRUD |
 | `/hooks` manager | ❌ | No hooks system at all |
@@ -66,7 +66,7 @@
 
 2. **No `$ARGUMENTS[N]` or `${CLAUDE_*}` substitutions** — GG Coder passes full args as a single string. Claude Code supports indexed args (`$0`, `$1`) and dynamic variables (`${CLAUDE_SESSION_ID}`, `${CLAUDE_SKILL_DIR}`).
 
-3. **No `!` bash prefix or `@` file mentions** — These are high-frequency UX shortcuts that Claude Code users rely on constantly.
+3. **`!` bash prefix and `@` file mentions are now implemented** — `!command` runs shell directly; `@path/to/file` injects file content into the prompt.
 
 4. **No `/agents` interactive manager** — Claude Code lets users create/edit/delete agents interactively with guided setup + Claude generation. GG Coder requires manual file editing.
 
@@ -99,12 +99,12 @@
 
 | Capability | GG Coder | Detail |
 |-----------|----------|--------|
-| Mode toggle | ❓ | State machine exists but **Shift+Tab keybinding not wired in UI** |
-| `/plan` command | ❓ | **Not registered as a slash command** |
+| Mode toggle | ✅ | `Option+Tab` / `Ctrl+P` toggles plan mode on/off |
+| `/plan` command | ✅ | `/plan [description]` enters plan mode, optional args kick off planning |
 | EnterPlanMode tool | ✅ | `enter_plan_mode` tool with reason parameter |
 | ExitPlanMode tool | ✅ | `exit_plan_mode` tool with plan parameter |
 | Read-only enforcement | ✅ | `checkPlanModeBlock()` blocks write/edit |
-| Bash blocked entirely | ⚠️ | GG blocks bash completely vs CC allows read-only bash |
+| Bash allowed (read-only) | ✅ | `isReadOnlyBashCommand()` allows ls, cat, git log/diff/status, etc. |
 | Plan subagent delegation | ❌ | No automatic delegation to Plan subagent during planning |
 | Plan approval flow | ✅ | Manager supports approve/reject/cancel + feedback |
 | Plan file persistence | ✅ | Plans saved to `.gg/plans/{timestamp}-{slug}.md` |
@@ -118,19 +118,18 @@
 | Plan content update after edit | ✅ | `updatePlanContent()` for external edits |
 | State change listeners | ✅ | `onChange(listener)` subscription pattern |
 
-### Critical Gaps in Plan Mode
+### Remaining Gaps in Plan Mode
 
-1. **Bash is completely blocked** — GG Coder blocks ALL bash in plan mode. Claude Code allows read-only bash (`ls`, `git status`, `git log`, `git diff`, `find`, `cat`, `head`, `tail`). This is a significant limitation — the agent can't run `git log`, `git diff`, or any read-only shell command during planning. The system prompt even says "DO NOT: use bash — it is completely blocked" which contradicts Claude Code's approach.
+1. **No Plan subagent delegation** — Claude Code's plan mode automatically delegates codebase research to the Plan subagent (separate context window) to avoid filling the main context with exploration results. GG Coder's plan mode runs everything in the main context.
 
-2. **No Shift+Tab keybinding** — The state machine exists but there's no UI keybinding to toggle plan mode. Users can only enter plan mode when the model calls `enter_plan_mode` proactively, or if a `/plan` command exists (it doesn't appear to be registered).
+2. **No permission mode integration** — Claude Code's plan mode is also a `permissionMode` option for subagents. GG Coder has no permission system, so this entire dimension is missing.
 
-3. **No `/plan` slash command** — There's no registered slash command to enter plan mode manually. The user has no way to trigger plan mode except hoping the model does it.
+### Previously Fixed
 
-4. **No Plan subagent delegation** — Claude Code's plan mode automatically delegates codebase research to the Plan subagent (separate context window) to avoid filling the main context with exploration results. GG Coder's plan mode runs everything in the main context.
-
-5. **No permission mode integration** — Claude Code's plan mode is also a `permissionMode` option for subagents. GG Coder has no permission system, so this entire dimension is missing.
-
-6. **PlanModeManager not wired to tools/index.ts** — Looking at `createTools()`, `planModeManager` is only passed if explicitly provided in options. In `cli.ts → runInkTUI()`, there's no `PlanModeManager` creation or injection. The plan mode state machine exists but **may not be wired to the actual agent loop**.
+- ~~Bash blocked in plan mode~~ → Read-only bash is now allowed via `isReadOnlyBashCommand()`
+- ~~No Shift+Tab/Ctrl+Tab keybinding~~ → `Ctrl+Tab` and `Ctrl+P` toggle plan mode
+- ~~No `/plan` slash command~~ → `/plan [description]` is handled in App.tsx
+- ~~PlanModeManager not wired~~ → Wired from `cli.ts` → `createTools()` → `App.tsx` via props
 
 ---
 

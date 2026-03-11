@@ -99,12 +99,34 @@ export function toAnthropicMessages(
     if (msg.role === "tool") {
       out.push({
         role: "user",
-        content: msg.content.map((result) => ({
-          type: "tool_result" as const,
-          tool_use_id: result.toolCallId,
-          content: result.content,
-          is_error: result.isError,
-        })),
+        content: msg.content.map((result) => {
+          // If tool result includes images, build a content array with text + image blocks
+          if (result.images?.length) {
+            const blocks: Anthropic.ToolResultBlockParam["content"] = [
+              { type: "text" as const, text: result.content },
+              ...result.images.map((img) => ({
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: img.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data: img.data,
+                },
+              })),
+            ];
+            return {
+              type: "tool_result" as const,
+              tool_use_id: result.toolCallId,
+              content: blocks,
+              is_error: result.isError,
+            };
+          }
+          return {
+            type: "tool_result" as const,
+            tool_use_id: result.toolCallId,
+            content: result.content,
+            is_error: result.isError,
+          };
+        }),
       });
     }
   }
@@ -301,10 +323,14 @@ export function toOpenAIMessages(messages: Message[]): OpenAI.ChatCompletionMess
     }
     if (msg.role === "tool") {
       for (const result of msg.content) {
+        // OpenAI tool results don't support image blocks natively;
+        // images are dropped (they're primarily for Anthropic's multimodal tool results)
         out.push({
           role: "tool",
           tool_call_id: result.toolCallId,
-          content: result.content,
+          content: result.images?.length
+            ? `${result.content}\n\n[${result.images.length} image(s) attached — visible in Anthropic provider only]`
+            : result.content,
         });
       }
     }

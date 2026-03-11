@@ -38,10 +38,18 @@ export interface ToolCall {
   args: Record<string, unknown>;
 }
 
+export interface ToolResultImage {
+  type: "image";
+  mediaType: string;
+  data: string; // base64
+}
+
 export interface ToolResult {
   type: "tool_result";
   toolCallId: string;
   content: string;
+  /** Optional image content blocks returned alongside text. */
+  images?: ToolResultImage[];
   isError?: boolean;
 }
 

@@ -83,6 +83,9 @@ export function Banner({ version, model, cwd, taskCount }: BannerProps) {
         <Text color={theme.textDim}>{"  "}</Text>
         <Text color={theme.primary}>Shift+Tab</Text>
         <Text color={theme.textDim}> thinking</Text>
+        <Text color={theme.textDim}>{"  "}</Text>
+        <Text color={theme.primary}>Option+Tab</Text>
+        <Text color={theme.textDim}> plan</Text>
       </Box>
     </Box>
   );

@@ -46,7 +46,7 @@ import { shouldCompact, compact } from "../core/compaction/compactor.js";
 import { estimateConversationTokens } from "../core/compaction/token-estimator.js";
 import { PROMPT_COMMANDS, getPromptCommand } from "../core/prompt-commands.js";
 import { loadCustomCommands, type CustomCommand } from "../core/custom-commands.js";
-import { extractEmbedded } from "../core/slash-commands.js";
+import { extractEmbedded, parseBashPrefix, extractFileMentions } from "../core/slash-commands.js";
 import { pruneHistory, flushOnTurnText, flushOnTurnEnd } from "./live-item-flush.js";
 import {
   createPlanModeManager,
@@ -434,6 +434,11 @@ export function App(props: AppProps) {
   // Two-phase flush: items waiting to be moved to Static history after the
   // live area has been cleared and Ink has committed the smaller output.
   const pendingFlushRef = useRef<CompletedItem[]>([]);
+
+  // Message queue: when the user submits while the agent is running,
+  // the message is queued and sent after the current run completes.
+  const queuedMessageRef = useRef<{ input: string; images: ImageAttachment[] } | null>(null);
+  const handleSubmitRef = useRef<(input: string, images: ImageAttachment[]) => void>(() => {});
 
   // Derive credentials for the current provider
   const currentCreds = props.credentialsByProvider?.[currentProvider];
@@ -1207,6 +1212,94 @@ export function App(props: AppProps) {
         }
       }
 
+      // Handle ! bash prefix — run command directly without the agent
+      {
+        const bashCmd = parseBashPrefix(trimmed);
+        if (bashCmd) {
+          log("INFO", "bash-prefix", `Direct bash: ${bashCmd}`);
+
+          // Move live items into history
+          setLiveItems((prev) => {
+            if (prev.length > 0) {
+              setHistory((h) => pruneHistory([...h, ...prev]));
+            }
+            return [];
+          });
+
+          const userItem: UserItem = { kind: "user", text: trimmed, id: getId() };
+          setLastUserMessage(trimmed);
+          setDoneStatus(null);
+          setLiveItems([userItem]);
+
+          try {
+            const { execSync } = await import("node:child_process");
+            const output = execSync(bashCmd, {
+              cwd: props.cwd,
+              encoding: "utf-8",
+              timeout: 30_000,
+              maxBuffer: 1024 * 1024,
+              stdio: ["pipe", "pipe", "pipe"],
+            });
+            const trimmedOutput = (output || "").trim();
+            setLiveItems((prev) => [
+              ...prev,
+              {
+                kind: "tool_done",
+                name: "bash",
+                args: { command: bashCmd },
+                result: trimmedOutput || "(no output)",
+                isError: false,
+                durationMs: 0,
+                id: getId(),
+              },
+            ]);
+          } catch (err: unknown) {
+            const execErr = err as { stdout?: string; stderr?: string; status?: number; message?: string };
+            const output = (execErr.stdout || "").trim();
+            const stderr = (execErr.stderr || "").trim();
+            const combined = [output, stderr].filter(Boolean).join("\n");
+            setLiveItems((prev) => [
+              ...prev,
+              {
+                kind: "tool_done",
+                name: "bash",
+                args: { command: bashCmd },
+                result: combined || execErr.message || "Command failed",
+                isError: true,
+                durationMs: 0,
+                id: getId(),
+              },
+            ]);
+          }
+          return;
+        }
+      }
+
+      // Handle @ file mentions — read mentioned files and include content in prompt
+      let fileContext = "";
+      {
+        const mentions = extractFileMentions(trimmed);
+        if (mentions.length > 0) {
+          const { readFile } = await import("node:fs/promises");
+          const { resolve } = await import("node:path");
+          const parts: string[] = [];
+          for (const mention of mentions) {
+            const filePath = resolve(props.cwd, mention);
+            try {
+              const content = await readFile(filePath, "utf-8");
+              const lines = content.split("\n");
+              const numbered = lines.map((line, i) => `${String(i + 1).padStart(6, " ")}\t${line}`).join("\n");
+              parts.push(`<file path="${mention}">\n${numbered}\n</file>`);
+              log("INFO", "file-mention", `Loaded @${mention} (${lines.length} lines)`);
+            } catch {
+              parts.push(`<file path="${mention}">\n[Error: Could not read file]\n</file>`);
+              log("WARN", "file-mention", `Failed to read @${mention}`);
+            }
+          }
+          fileContext = "\n\n## Referenced Files\n\n" + parts.join("\n\n");
+        }
+      }
+
       // Move any remaining live items into history (Static) before starting new turn
       setLiveItems((prev) => {
         if (prev.length > 0) {
@@ -1244,7 +1337,18 @@ export function App(props: AppProps) {
         }
         userContent = parts;
       } else {
-        userContent = input;
+        userContent = fileContext ? input + fileContext : input;
+      }
+
+      // If the agent is already running, queue this message for later
+      if (agentLoop.isRunning) {
+        queuedMessageRef.current = { input, images: inputImages };
+        log("INFO", "queue", "Message queued — will send after current task completes");
+        setLiveItems((prev) => [
+          ...prev,
+          { kind: "info", text: `⏳ Message queued — will send after current task completes`, id: getId() },
+        ]);
+        return;
       }
 
       // Run agent
@@ -1265,8 +1369,30 @@ export function App(props: AppProps) {
     [agentLoop, props.onSlashCommand, compactConversation, customCommands, reloadCustomCommands],
   );
 
+  // Keep handleSubmitRef in sync so onDone can dequeue messages
+  handleSubmitRef.current = handleSubmit;
+
+  // Dequeue: when agent finishes and there's a queued message, send it
+  const prevIsRunning = useRef(false);
+  useEffect(() => {
+    if (prevIsRunning.current && !agentLoop.isRunning) {
+      const queued = queuedMessageRef.current;
+      if (queued) {
+        queuedMessageRef.current = null;
+        log("INFO", "queue", "Dequeuing message after agent completed");
+        // Small delay to allow the two-phase flush to complete
+        setTimeout(() => {
+          handleSubmitRef.current(queued.input, queued.images);
+        }, 600);
+      }
+    }
+    prevIsRunning.current = agentLoop.isRunning;
+  }, [agentLoop.isRunning]);
+
   const handleAbort = useCallback(() => {
     if (agentLoop.isRunning) {
+      // Clear queued messages when aborting
+      queuedMessageRef.current = null;
       agentLoop.abort();
     } else {
       app.exit();
@@ -1615,11 +1741,16 @@ export function App(props: AppProps) {
               planFilePath={planManagerRef.current.planFilePath}
               onApprove={() => {
                 const pm = planManagerRef.current;
+                const plan = pm.planContent ?? "";
                 pm.approve();
                 setLiveItems((prev) => [
                   ...prev,
                   { kind: "info", text: "✅ Plan approved — executing…", id: getId() },
                 ]);
+                // Resume the agent loop to execute the approved plan
+                void agentLoop.run(
+                  `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
+                );
               }}
               onReject={(feedback) => {
                 const pm = planManagerRef.current;
@@ -1687,10 +1818,27 @@ export function App(props: AppProps) {
               elicitation={pendingQuestions.elicitation}
               onAccept={(answers) => {
                 const resolve = pendingQuestions.resolve;
+                const questions = pendingQuestions.questions;
                 setPendingQuestions(null);
                 const count = Object.keys(answers).length;
                 log("INFO", "ask-user-question", `User accepted ${count} answer(s)`);
                 trackQuestion({ event: "question_answered", questionCount: count, outcome: "accept" });
+
+                // Show a summary of answered questions (Claude Code style)
+                const answerLines = Object.entries(answers)
+                  .map(([key, val]) => {
+                    // Try to find the original question text for this key
+                    const q = questions.find((q) => q.question === key || q.header === key);
+                    const label = q?.question ?? key;
+                    return `  · ${label} → ${val}`;
+                  })
+                  .join("\n");
+                const summary = `● User answered GG Coder's questions:\n └${answerLines}`;
+                setLiveItems((prev) => [
+                  ...prev,
+                  { kind: "info", text: summary, id: getId() },
+                ]);
+
                 resolve({ action: "accept", answers });
               }}
               onDecline={() => {
@@ -1707,50 +1855,6 @@ export function App(props: AppProps) {
                 trackQuestion({ event: "question_cancelled", questionCount: pendingQuestions.questions.length, outcome: "cancel" });
                 resolve({ action: "cancel", answers: {} });
               }}
-              onClearContext={async (answers, planSummary) => {
-                const resolve = pendingQuestions.resolve;
-                setPendingQuestions(null);
-                log("INFO", "plan-mode", "Clear context: copying plan to clipboard and starting new session");
-
-                // Copy plan summary to clipboard
-                try {
-                  await copyToClipboard(planSummary);
-                  log("INFO", "clipboard", `Copied plan summary (${planSummary.length} chars)`);
-                } catch {
-                  // Clipboard copy is best-effort
-                  log("WARN", "clipboard", "Failed to copy plan summary to clipboard");
-                }
-
-                // Resolve the tool call with the accepted answers first
-                trackQuestion({ event: "question_answered", questionCount: Object.keys(answers).length, outcome: "accept" });
-                resolve({ action: "accept", answers });
-
-                // Clear the session (replicating /clear logic)
-                stdout?.write("\x1b[2J\x1b[3J\x1b[H");
-                setHistory([{ kind: "banner", id: "banner" }]);
-                setLiveItems([]);
-                messagesRef.current = messagesRef.current.slice(0, 1); // keep system prompt
-                agentLoop.reset();
-
-                // Cancel plan mode if active
-                const pm = planManagerRef.current;
-                if (pm.state !== "idle") {
-                  pm.cancel();
-                }
-
-                // Inject plan context into new session and run
-                setLiveItems([
-                  { kind: "info", text: "🔄 New session with plan context (copied to clipboard)", id: getId() },
-                ]);
-                setDoneStatus(null);
-                try {
-                  await agentLoop.run(planSummary);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  log("ERROR", "error", msg);
-                  setLiveItems((prev) => [...prev, { kind: "error", message: msg, id: getId() }]);
-                }
-              }}
             />
           )}
 
@@ -1758,7 +1862,8 @@ export function App(props: AppProps) {
           <InputArea
             onSubmit={handleSubmit}
             onAbort={handleAbort}
-            disabled={agentLoop.isRunning || !!pendingQuestions}
+            disabled={!!pendingQuestions}
+            isAgentRunning={agentLoop.isRunning}
             isActive={!taskBarFocused && !pendingQuestions}
             onDownAtEnd={handleFocusTaskBar}
             onShiftTab={handleShiftTabCycle}

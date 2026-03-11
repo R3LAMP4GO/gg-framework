@@ -14,6 +14,8 @@ import type {
 export interface StructuredToolResult {
   content: string;
   details?: unknown;
+  /** Optional image content blocks to include in the tool result. */
+  images?: Array<{ type: "image"; mediaType: string; data: string }>;
 }
 
 export type ToolExecuteResult = string | StructuredToolResult;

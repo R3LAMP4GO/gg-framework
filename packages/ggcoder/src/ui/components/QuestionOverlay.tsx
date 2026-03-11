@@ -1,14 +1,13 @@
 /**
- * QuestionOverlay — Interactive multi-choice question UI with MCP elicitation support.
+ * QuestionOverlay — Wizard-style multi-step question UI with MCP elicitation support.
  *
- * Renders structured questions from the ask_user_question tool with:
- *   - Tab navigation between questions (header chips with ☐/☑ status)
- *   - Arrow key option selection with descriptions
- *   - Auto-generated "Other" option with inline text editor
- *   - Multi-select support with checkboxes (Space to toggle)
- *   - Field-based form rendering for MCP elicitation (boolean, string, enum, array)
- *   - 3-way response: Accept (^S), Decline (^D), Cancel (Esc)
- *   - Smart auto-advance to next unanswered question
+ * Renders structured questions from the ask_user_question tool as a step wizard:
+ *   - Tab bar: ← □ Stack □ Features □ Output ✓ Submit → with highlighted current tab
+ *   - Numbered option list with indented descriptions
+ *   - "Type something" free-text option on each question
+ *   - "Chat about this" and "Skip interview and plan immediately" meta-options
+ *   - Dedicated Submit tab with review screen and unanswered warning
+ *   - Navigation: Enter to select, Tab/Arrow for tabs, number keys, Esc to cancel
  */
 
 import React, { useState, useCallback, useMemo } from "react";
@@ -28,20 +27,25 @@ interface QuestionOverlayProps {
   onClearContext?: (answers: Record<string, string>, planSummary: string) => void;
 }
 
-type SubmitPhase = "answering" | "confirm";
-
 interface QuestionState {
-  /** Index of selected option (-1 = none, options.length = "Other") */
+  /** Index of selected option in the full list (including Type something) */
   selectedIdx: number;
   /** Set of selected indices for multi-select */
   selectedSet: Set<number>;
-  /** Text for "Other" option */
+  /** Text for free-text input */
   otherText: string;
-  /** Whether the user is typing in the "Other" field */
+  /** Whether the user is typing in the free-text field */
   editingOther: boolean;
-  /** Cursor position in Other text */
+  /** Cursor position in free-text */
   otherCursor: number;
+  /** Whether this question has been explicitly answered */
+  answered: boolean;
 }
+
+// Special option indices (relative to end of real options)
+const TYPE_SOMETHING_LABEL = "Type something.";
+const CHAT_LABEL = "Chat about this";
+const SKIP_LABEL = "Skip interview and plan immediately";
 
 // ── Component ─────────────────────────────────────────────
 
@@ -67,7 +71,6 @@ export function QuestionOverlay({
       const enumValues = f.enum as string[] | undefined;
       const enumNames = f.enumNames as string[] | undefined;
 
-      // Enum field → options
       if (enumValues && enumValues.length > 0) {
         return {
           question: title + "?",
@@ -80,7 +83,6 @@ export function QuestionOverlay({
         };
       }
 
-      // Boolean field → Yes/No options
       if (f.type === "boolean") {
         return {
           question: title + "?",
@@ -93,7 +95,6 @@ export function QuestionOverlay({
         };
       }
 
-      // Array field with items.enum → multi-select
       if (f.type === "array" && f.items && typeof f.items === "object") {
         const items = f.items as Record<string, unknown>;
         const itemEnum = items.enum as string[] | undefined;
@@ -107,7 +108,6 @@ export function QuestionOverlay({
         }
       }
 
-      // String/number fields → just "Other" text input (empty options)
       return {
         question: title + (title.endsWith("?") ? "" : "?"),
         header: key.slice(0, 12),
@@ -117,42 +117,44 @@ export function QuestionOverlay({
     });
   }, [questions, elicitation]);
 
-  const [currentQ, setCurrentQ] = useState(0);
-  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("answering");
+  // totalTabs = question tabs + submit tab
+  const totalTabs = effectiveQuestions.length + 1;
+  const submitTabIdx = effectiveQuestions.length;
+
+  const [currentTab, setCurrentTab] = useState(0);
+  const [submitSelectedIdx, setSubmitSelectedIdx] = useState(0); // 0 = Submit, 1 = Cancel
+
   const [states, setStates] = useState<QuestionState[]>(() =>
     effectiveQuestions.map((q) => ({
-      selectedIdx: q.options.length === 0 ? 0 : 0, // If no options, "Other" is idx 0
+      selectedIdx: 0,
       selectedSet: new Set<number>(),
       otherText: "",
       editingOther: q.options.length === 0, // Auto-edit for text-only fields
       otherCursor: 0,
+      answered: false,
     })),
   );
 
-  const question = effectiveQuestions[currentQ];
-  const state = states[currentQ];
-  if (!question || !state) return null;
+  const isOnSubmitTab = currentTab === submitTabIdx;
+  const question = isOnSubmitTab ? null : effectiveQuestions[currentTab];
+  const state = isOnSubmitTab ? null : states[currentTab];
 
-  const otherIdx = question.options.length;
-  const hasOtherOption = true; // Always show "Other" unless it's a text-only field
-  const isTextOnlyField = question.options.length === 0;
-  const totalOptions = isTextOnlyField ? 1 : otherIdx + 1;
+  // For each question: real options + "Type something" + separator + "Chat" + "Skip"
+  // "Type something" idx = options.length
+  // "Chat about this" idx = options.length + 1
+  // "Skip interview" idx = options.length + 2
+  const typeIdx = question ? question.options.length : 0;
+  const chatIdx = question ? question.options.length + 1 : 1;
+  const skipIdx = question ? question.options.length + 2 : 2;
+  const totalOptions = question ? question.options.length + 3 : 3;
 
   // Check which questions have answers
   const answeredQuestions = useMemo(() => {
-    return states.map((s, i) => {
-      const q = effectiveQuestions[i];
-      if (!q) return false;
-      if (q.options.length === 0) return s.otherText.trim().length > 0;
-      if (q.multiSelect) {
-        return s.selectedSet.size > 0 || s.otherText.trim().length > 0;
-      }
-      if (s.selectedIdx === q.options.length) return s.otherText.trim().length > 0;
-      return s.selectedIdx >= 0 && s.selectedIdx < q.options.length;
-    });
-  }, [states, effectiveQuestions]);
+    return states.map((s) => s.answered);
+  }, [states]);
 
   const allAnswered = answeredQuestions.every(Boolean);
+  const answeredCount = answeredQuestions.filter(Boolean).length;
 
   const updateState = useCallback(
     (idx: number, patch: Partial<QuestionState>) => {
@@ -165,23 +167,17 @@ export function QuestionOverlay({
     [],
   );
 
-  // Navigate to next unanswered question
-  const nextUnanswered = useCallback(() => {
-    for (let i = currentQ + 1; i < effectiveQuestions.length; i++) {
+  // Navigate to next unanswered question (or submit tab)
+  const advanceToNext = useCallback(() => {
+    for (let i = currentTab + 1; i < effectiveQuestions.length; i++) {
       if (!answeredQuestions[i]) {
-        setCurrentQ(i);
+        setCurrentTab(i);
         return;
       }
     }
-    // All remaining answered — just go to next
-    if (currentQ < effectiveQuestions.length - 1) {
-      setCurrentQ(currentQ + 1);
-    }
-  }, [currentQ, effectiveQuestions.length, answeredQuestions]);
-
-  const prevQuestion = useCallback(() => {
-    setCurrentQ((q) => Math.max(0, q - 1));
-  }, []);
+    // All remaining answered — go to submit
+    setCurrentTab(submitTabIdx);
+  }, [currentTab, effectiveQuestions.length, answeredQuestions, submitTabIdx]);
 
   const buildAnswers = useCallback((): Record<string, string> => {
     const answers: Record<string, string> = {};
@@ -190,18 +186,24 @@ export function QuestionOverlay({
       const s = states[i];
       if (!q || !s) continue;
 
+      if (!s.answered) {
+        answers[q.question] = "No answer";
+        continue;
+      }
+
       if (q.options.length === 0) {
-        // Text-only field
         answers[q.question] = s.otherText.trim() || "No answer";
       } else if (q.multiSelect) {
         const selected = [...s.selectedSet]
           .sort()
-          .map((idx) =>
-            idx === q.options.length ? s.otherText.trim() : q.options[idx]?.label,
-          )
+          .map((idx) => {
+            if (idx === q.options.length) return s.otherText.trim();
+            return q.options[idx]?.label;
+          })
           .filter(Boolean);
         answers[q.question] = selected.join(", ") || "No selection";
       } else if (s.selectedIdx === q.options.length) {
+        // "Type something" was selected
         answers[q.question] = s.otherText.trim() || "No answer";
       } else if (s.selectedIdx >= 0 && s.selectedIdx < q.options.length) {
         answers[q.question] = q.options[s.selectedIdx]!.label;
@@ -227,192 +229,13 @@ export function QuestionOverlay({
         tab?: boolean;
         shift?: boolean;
       }) => {
-        // ── Other text editing mode ──
-        if (state.editingOther) {
-          if (key.escape && !isTextOnlyField) {
-            updateState(currentQ, { editingOther: false });
-            return;
-          }
-          if (key.return) {
-            if (isTextOnlyField) {
-              // For text-only fields, Enter confirms and advances
-              nextUnanswered();
-            } else {
-              updateState(currentQ, { editingOther: false });
-            }
-            return;
-          }
-          if (key.backspace || key.delete) {
-            if (state.otherCursor > 0) {
-              const t = state.otherText;
-              updateState(currentQ, {
-                otherText: t.slice(0, state.otherCursor - 1) + t.slice(state.otherCursor),
-                otherCursor: state.otherCursor - 1,
-              });
-            }
-            return;
-          }
-          if (key.leftArrow) {
-            updateState(currentQ, { otherCursor: Math.max(0, state.otherCursor - 1) });
-            return;
-          }
-          if (key.rightArrow) {
-            updateState(currentQ, {
-              otherCursor: Math.min(state.otherText.length, state.otherCursor + 1),
-            });
-            return;
-          }
-          // Ctrl+S/Ctrl+Enter: submit from editing mode
-          if ((key.ctrl && input === "s") || (key.ctrl && key.return)) {
-            if (!allAnswered) return;
-            if (onClearContext && submitPhase === "answering") {
-              setSubmitPhase("confirm");
-              return;
-            }
-            onAccept(buildAnswers());
-            return;
-          }
-          // Ctrl+D: decline from editing mode
-          if (key.ctrl && input === "d") {
-            onDecline();
-            return;
-          }
-          if (key.ctrl && input === "c") {
-            onCancel();
-            return;
-          }
-          if (input && !key.ctrl) {
-            const t = state.otherText;
-            updateState(currentQ, {
-              otherText: t.slice(0, state.otherCursor) + input + t.slice(state.otherCursor),
-              otherCursor: state.otherCursor + input.length,
-            });
-          }
-          return;
-        }
-
-        // ── Normal selection mode ──
-
-        // Tab / Shift+Tab: navigate between questions
-        if (key.tab && !key.shift && currentQ < effectiveQuestions.length - 1) {
-          setCurrentQ((q) => q + 1);
-          return;
-        }
-        if (key.tab && key.shift && currentQ > 0) {
-          prevQuestion();
-          return;
-        }
-
-        // Arrow navigation
-        if (key.upArrow) {
-          updateState(currentQ, {
-            selectedIdx: Math.max(0, state.selectedIdx - 1),
-          });
-          return;
-        }
-        if (key.downArrow) {
-          updateState(currentQ, {
-            selectedIdx: Math.min(totalOptions - 1, state.selectedIdx + 1),
-          });
-          return;
-        }
-
-        // Space: toggle in multi-select mode (matches Claude Code's Confirmation context)
-        if (input === " " && question.multiSelect) {
-          if (state.selectedIdx === otherIdx) {
-            const newSet = new Set(state.selectedSet);
-            newSet.add(otherIdx);
-            updateState(currentQ, {
-              editingOther: true,
-              otherCursor: state.otherText.length,
-              selectedSet: newSet,
-            });
-          } else {
-            const newSet = new Set(state.selectedSet);
-            if (newSet.has(state.selectedIdx)) {
-              newSet.delete(state.selectedIdx);
-            } else {
-              newSet.add(state.selectedIdx);
-            }
-            updateState(currentQ, { selectedSet: newSet });
-          }
-          return;
-        }
-
-        // Enter: select option
-        if (key.return) {
-          if (question.multiSelect) {
-            // Toggle selection
-            if (state.selectedIdx === otherIdx) {
-              const newSet = new Set(state.selectedSet);
-              newSet.add(otherIdx);
-              updateState(currentQ, {
-                editingOther: true,
-                otherCursor: state.otherText.length,
-                selectedSet: newSet,
-              });
-            } else {
-              const newSet = new Set(state.selectedSet);
-              if (newSet.has(state.selectedIdx)) {
-                newSet.delete(state.selectedIdx);
-              } else {
-                newSet.add(state.selectedIdx);
-              }
-              updateState(currentQ, { selectedSet: newSet });
-            }
-          } else {
-            // Single-select
-            if (state.selectedIdx === otherIdx) {
-              updateState(currentQ, {
-                editingOther: true,
-                otherCursor: state.otherText.length,
-              });
-            } else {
-              // Option selected — auto-advance to next unanswered
-              nextUnanswered();
-            }
-          }
-          return;
-        }
-
-        // Ctrl+Enter or Ctrl+S: Submit all answers (accept)
-        if ((key.ctrl && input === "s") || (key.ctrl && key.return)) {
-          if (!allAnswered) return;
-          if (onClearContext && submitPhase === "answering") {
-            setSubmitPhase("confirm");
-            return;
-          }
-          onAccept(buildAnswers());
-          return;
-        }
-
-        // Ctrl+D: Decline to answer
-        if (key.ctrl && input === "d") {
-          onDecline();
-          return;
-        }
-
-        // In confirm phase, handle s/n/Esc
-        if (submitPhase === "confirm") {
-          if (input === "s") {
-            onAccept(buildAnswers());
-            return;
-          }
-          if (input === "n" && onClearContext) {
-            const answers = buildAnswers();
-            const summary = formatPlanSummary(effectiveQuestions, answers);
-            onClearContext(answers, summary);
-            return;
-          }
-          if (key.escape) {
-            setSubmitPhase("answering");
-            return;
-          }
-          return;
-        }
-
-        // Escape: cancel
+        // ── Escape: cancel entire wizard ──
         if (key.escape) {
+          if (state?.editingOther) {
+            // Exit text editing first
+            updateState(currentTab, { editingOther: false });
+            return;
+          }
           onCancel();
           return;
         }
@@ -421,173 +244,426 @@ export function QuestionOverlay({
           onCancel();
           return;
         }
+
+        // ── Submit tab handling ──
+        if (isOnSubmitTab) {
+          if (key.upArrow) {
+            setSubmitSelectedIdx((i) => Math.max(0, i - 1));
+            return;
+          }
+          if (key.downArrow) {
+            setSubmitSelectedIdx((i) => Math.min(1, i + 1));
+            return;
+          }
+          if (key.return) {
+            if (submitSelectedIdx === 0) {
+              // Submit answers
+              onAccept(buildAnswers());
+            } else {
+              // Cancel
+              onCancel();
+            }
+            return;
+          }
+          // Tab navigation from submit
+          if ((key.tab && key.shift) || key.leftArrow) {
+            setCurrentTab((t) => Math.max(0, t - 1));
+            return;
+          }
+          // Number keys on submit tab
+          if (input === "1") {
+            onAccept(buildAnswers());
+            return;
+          }
+          if (input === "2") {
+            onCancel();
+            return;
+          }
+          return;
+        }
+
+        // ── Free-text editing mode ──
+        if (state?.editingOther) {
+          if (key.return) {
+            // Confirm text and mark answered
+            if (state.otherText.trim()) {
+              updateState(currentTab, { editingOther: false, answered: true });
+              advanceToNext();
+            } else {
+              updateState(currentTab, { editingOther: false });
+            }
+            return;
+          }
+          if (key.backspace || key.delete) {
+            if (state.otherCursor > 0) {
+              const t = state.otherText;
+              updateState(currentTab, {
+                otherText: t.slice(0, state.otherCursor - 1) + t.slice(state.otherCursor),
+                otherCursor: state.otherCursor - 1,
+              });
+            }
+            return;
+          }
+          if (key.leftArrow) {
+            updateState(currentTab, { otherCursor: Math.max(0, state.otherCursor - 1) });
+            return;
+          }
+          if (key.rightArrow) {
+            updateState(currentTab, {
+              otherCursor: Math.min(state.otherText.length, state.otherCursor + 1),
+            });
+            return;
+          }
+          if (input && !key.ctrl) {
+            const t = state.otherText;
+            updateState(currentTab, {
+              otherText: t.slice(0, state.otherCursor) + input + t.slice(state.otherCursor),
+              otherCursor: state.otherCursor + input.length,
+            });
+          }
+          return;
+        }
+
+        // ── Tab / arrow navigation between tabs ──
+        if (key.tab && !key.shift) {
+          setCurrentTab((t) => Math.min(totalTabs - 1, t + 1));
+          return;
+        }
+        if (key.tab && key.shift) {
+          setCurrentTab((t) => Math.max(0, t - 1));
+          return;
+        }
+        // Left/Right arrow also navigate tabs (when not editing)
+        if (key.rightArrow) {
+          setCurrentTab((t) => Math.min(totalTabs - 1, t + 1));
+          return;
+        }
+        if (key.leftArrow) {
+          setCurrentTab((t) => Math.max(0, t - 1));
+          return;
+        }
+
+        if (!question || !state) return;
+
+        // ── Up/Down: navigate options within question ──
+        if (key.upArrow) {
+          updateState(currentTab, {
+            selectedIdx: Math.max(0, state.selectedIdx - 1),
+          });
+          return;
+        }
+        if (key.downArrow) {
+          updateState(currentTab, {
+            selectedIdx: Math.min(totalOptions - 1, state.selectedIdx + 1),
+          });
+          return;
+        }
+
+        // ── Number keys: quick-select ──
+        const num = parseInt(input, 10);
+        if (num >= 1 && num <= totalOptions) {
+          const idx = num - 1;
+          handleOptionSelect(idx);
+          return;
+        }
+
+        // ── Space: toggle in multi-select mode ──
+        if (input === " " && question.multiSelect && state.selectedIdx < typeIdx) {
+          const newSet = new Set(state.selectedSet);
+          if (newSet.has(state.selectedIdx)) {
+            newSet.delete(state.selectedIdx);
+          } else {
+            newSet.add(state.selectedIdx);
+          }
+          updateState(currentTab, { selectedSet: newSet, answered: newSet.size > 0 });
+          return;
+        }
+
+        // ── Enter: select current option ──
+        if (key.return) {
+          handleOptionSelect(state.selectedIdx);
+          return;
+        }
+
+        function handleOptionSelect(idx: number) {
+          if (!question || !state) return;
+
+          // "Chat about this"
+          if (idx === chatIdx) {
+            onDecline();
+            return;
+          }
+
+          // "Skip interview and plan immediately"
+          if (idx === skipIdx) {
+            onAccept(buildAnswers());
+            return;
+          }
+
+          // "Type something"
+          if (idx === typeIdx) {
+            updateState(currentTab, {
+              selectedIdx: typeIdx,
+              editingOther: true,
+              otherCursor: state.otherText.length,
+            });
+            return;
+          }
+
+          // Regular option
+          if (question.multiSelect) {
+            const newSet = new Set(state.selectedSet);
+            if (newSet.has(idx)) {
+              newSet.delete(idx);
+            } else {
+              newSet.add(idx);
+            }
+            updateState(currentTab, { selectedSet: newSet, answered: newSet.size > 0 });
+          } else {
+            updateState(currentTab, { selectedIdx: idx, answered: true });
+            advanceToNext();
+          }
+        }
       },
       [
-        state, currentQ, question, totalOptions, otherIdx, isTextOnlyField,
-        effectiveQuestions, allAnswered, updateState, onAccept, onDecline, onCancel,
-        buildAnswers, onClearContext, submitPhase, nextUnanswered, prevQuestion,
+        state, currentTab, question, totalOptions, typeIdx, chatIdx, skipIdx,
+        isOnSubmitTab, submitSelectedIdx, totalTabs,
+        effectiveQuestions, updateState, onAccept, onDecline, onCancel,
+        buildAnswers, advanceToNext,
       ],
     ),
   );
 
+  if (effectiveQuestions.length === 0) return null;
+
+  // ── Render ─────────────────────────────────────────────
+
   return (
     <Box
       flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
       paddingLeft={1}
       paddingRight={1}
       marginTop={1}
     >
-      {/* Elicitation message */}
-      {elicitation?.message && (
-        <Box marginBottom={1}>
-          <Text color={theme.text} bold wrap="wrap">
-            {elicitation.message}
-          </Text>
-        </Box>
-      )}
-
-      {/* Tab bar — question chips */}
-      {effectiveQuestions.length > 1 && (
-        <Box marginBottom={1} gap={1}>
-          {effectiveQuestions.map((q, i) => {
-            const isCurrent = i === currentQ;
-            const isAnswered = answeredQuestions[i];
-            const check = isAnswered ? "☑" : "☐";
-            return (
-              <Box key={i}>
-                <Text
-                  color={isCurrent ? theme.accent : isAnswered ? theme.success : theme.textDim}
-                  bold={isCurrent}
-                >
-                  {check} {q.header}
+      {/* Tab bar: ← □ Stack □ Features ... ✓ Submit → */}
+      <Box marginBottom={1} gap={0}>
+        <Text color={theme.textDim}>{"← "}</Text>
+        {effectiveQuestions.map((q, i) => {
+          const isCurrent = currentTab === i;
+          const isAnswered = answeredQuestions[i];
+          const check = isAnswered ? "⊠" : "□";
+          const label = ` ${check} ${q.header} `;
+          return (
+            <Box key={i}>
+              {isCurrent ? (
+                <Text backgroundColor={theme.accent} color="#000000" bold>
+                  {label}
                 </Text>
+              ) : (
+                <Text color={isAnswered ? theme.text : theme.textDim}>
+                  {label}
+                </Text>
+              )}
+              <Text color={theme.textDim}>{" "}</Text>
+            </Box>
+          );
+        })}
+        {/* Submit tab */}
+        <Box>
+          {isOnSubmitTab ? (
+            <Text backgroundColor={theme.accent} color="#000000" bold>
+              {" ✓ Submit "}
+            </Text>
+          ) : (
+            <Text color={allAnswered ? theme.success : theme.textDim} bold={allAnswered}>
+              {" ✓ Submit "}
+            </Text>
+          )}
+        </Box>
+        <Text color={theme.textDim}>{" →"}</Text>
+      </Box>
+
+      {/* ── Submit tab content ── */}
+      {isOnSubmitTab ? (
+        <Box flexDirection="column">
+          <Box marginBottom={1}>
+            <Text color={theme.text} bold>Review your answers</Text>
+          </Box>
+
+          {/* Answer summary — question → answer pairs */}
+          <Box flexDirection="column" marginBottom={1}>
+            {effectiveQuestions.map((q, i) => {
+              const s = states[i];
+              let answerText = "No answer";
+              if (s.answered) {
+                if (q.options.length === 0) {
+                  answerText = s.otherText.trim() || "No answer";
+                } else if (q.multiSelect) {
+                  const selected = [...s.selectedSet]
+                    .sort()
+                    .map((idx) => idx === q.options.length ? s.otherText.trim() : q.options[idx]?.label)
+                    .filter(Boolean);
+                  answerText = selected.join(", ") || "No selection";
+                } else if (s.selectedIdx === q.options.length) {
+                  answerText = s.otherText.trim() || "No answer";
+                } else if (s.selectedIdx >= 0 && s.selectedIdx < q.options.length) {
+                  answerText = q.options[s.selectedIdx]!.label;
+                }
+              }
+              return (
+                <Box key={i} flexDirection="column" marginLeft={2}>
+                  <Box>
+                    <Text color={theme.textDim}>{"● "}</Text>
+                    <Text color={theme.text}>{q.question}</Text>
+                  </Box>
+                  <Box marginLeft={2}>
+                    <Text color={theme.textDim}>{"→ "}</Text>
+                    <Text color={s.answered ? theme.success : theme.warning} bold={s.answered}>
+                      {answerText}
+                    </Text>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+
+          {!allAnswered && (
+            <Box marginBottom={1}>
+              <Text color={theme.warning}>⚠ You have not answered all questions</Text>
+            </Box>
+          )}
+
+          <Box marginBottom={1}>
+            <Text color={theme.text}>Ready to submit your answers?</Text>
+          </Box>
+
+          {/* Submit options */}
+          <Box flexDirection="column">
+            <Box>
+              <Text color={submitSelectedIdx === 0 ? theme.accent : theme.textDim}>
+                {submitSelectedIdx === 0 ? "❯ " : "  "}
+              </Text>
+              <Text color={submitSelectedIdx === 0 ? theme.accent : theme.text} bold={submitSelectedIdx === 0}>
+                1. Submit answers
+              </Text>
+            </Box>
+            <Box>
+              <Text color={submitSelectedIdx === 1 ? theme.accent : theme.textDim}>
+                {submitSelectedIdx === 1 ? "❯ " : "  "}
+              </Text>
+              <Text color={submitSelectedIdx === 1 ? theme.accent : theme.text} bold={submitSelectedIdx === 1}>
+                2. Cancel
+              </Text>
+            </Box>
+          </Box>
+        </Box>
+      ) : question && state ? (
+        /* ── Question tab content ── */
+        <Box flexDirection="column">
+          {/* Question text */}
+          <Box marginBottom={1}>
+            <Text color={theme.text} bold wrap="wrap">
+              {question.question}
+            </Text>
+          </Box>
+
+          {/* Numbered options with descriptions */}
+          {question.options.map((opt, i) => {
+            const isFocused = state.selectedIdx === i;
+            const num = i + 1;
+
+            return (
+              <Box key={i} flexDirection="column">
+                <Box>
+                  <Text color={isFocused ? theme.accent : theme.textDim}>
+                    {isFocused ? "❯ " : "  "}
+                  </Text>
+                  <Text color={isFocused ? theme.accent : theme.text} bold={isFocused}>
+                    {num}. {opt.label}
+                  </Text>
+                </Box>
+                {opt.description && (
+                  <Box marginLeft={5}>
+                    <Text color={theme.textMuted} wrap="wrap">
+                      {opt.description}
+                    </Text>
+                  </Box>
+                )}
               </Box>
             );
           })}
-          <Box>
-            <Text color={allAnswered ? theme.success : theme.textDim} bold={allAnswered}>
-              {"→ Submit"}
-            </Text>
-          </Box>
-        </Box>
-      )}
 
-      {/* Question text */}
-      <Box marginBottom={1}>
-        <Text color={theme.primary} bold wrap="wrap">
-          {question.question}
-        </Text>
-      </Box>
-
-      {/* Options (if any) */}
-      {question.options.map((opt, i) => {
-        const isFocused = state.selectedIdx === i;
-        const isChecked = question.multiSelect
-          ? state.selectedSet.has(i)
-          : state.selectedIdx === i && !state.editingOther;
-        const bullet = question.multiSelect
-          ? isChecked ? "☑" : "☐"
-          : isFocused ? "●" : "○";
-
-        return (
-          <Box key={i} flexDirection="column">
+          {/* "Type something." option */}
+          <Box flexDirection="column">
             <Box>
-              <Text color={isFocused ? theme.accent : theme.textDim}>
-                {isFocused ? "❯ " : "  "}
+              <Text color={state.selectedIdx === typeIdx ? theme.accent : theme.textDim}>
+                {state.selectedIdx === typeIdx ? "❯ " : "  "}
               </Text>
-              <Text color={isFocused ? theme.accent : theme.text} bold={isFocused}>
-                {bullet} {opt.label}
+              <Text
+                color={state.selectedIdx === typeIdx ? theme.accent : theme.text}
+                bold={state.selectedIdx === typeIdx}
+              >
+                {typeIdx + 1}. {TYPE_SOMETHING_LABEL}
               </Text>
             </Box>
-            {isFocused && opt.description && (
+            {state.editingOther && (
               <Box marginLeft={5}>
-                <Text color={theme.textMuted} wrap="wrap">
-                  {opt.description}
+                <Text color={theme.inputPrompt} bold>{"❯ "}</Text>
+                <Text color={theme.text}>{state.otherText.slice(0, state.otherCursor)}</Text>
+                <Text inverse>
+                  {state.otherCursor < state.otherText.length
+                    ? state.otherText[state.otherCursor]
+                    : " "}
                 </Text>
+                <Text color={theme.text}>{state.otherText.slice(state.otherCursor + 1)}</Text>
               </Box>
             )}
           </Box>
-        );
-      })}
 
-      {/* "Other" option (or text-only input for string/number fields) */}
-      {isTextOnlyField ? (
-        <Box flexDirection="column">
-          <Box marginLeft={0} marginTop={0}>
-            <Text color={theme.inputPrompt} bold>{"❯ "}</Text>
-            <Text color={theme.text}>{state.otherText.slice(0, state.otherCursor)}</Text>
-            <Text inverse>
-              {state.otherCursor < state.otherText.length
-                ? state.otherText[state.otherCursor]
-                : " "}
-            </Text>
-            <Text color={theme.text}>{state.otherText.slice(state.otherCursor + 1)}</Text>
-          </Box>
-        </Box>
-      ) : (
-        <Box flexDirection="column">
+          {/* Separator */}
+          <Box marginTop={1} />
+
+          {/* "Chat about this" */}
           <Box>
-            <Text color={state.selectedIdx === otherIdx ? theme.accent : theme.textDim}>
-              {state.selectedIdx === otherIdx ? "❯ " : "  "}
+            <Text color={state.selectedIdx === chatIdx ? theme.accent : theme.textDim}>
+              {state.selectedIdx === chatIdx ? "❯ " : "  "}
             </Text>
             <Text
-              color={state.selectedIdx === otherIdx ? theme.accent : theme.text}
-              bold={state.selectedIdx === otherIdx}
+              color={state.selectedIdx === chatIdx ? theme.accent : theme.text}
+              bold={state.selectedIdx === chatIdx}
             >
-              {question.multiSelect
-                ? state.selectedSet.has(otherIdx) ? "☑" : "☐"
-                : state.selectedIdx === otherIdx ? "●" : "○"}{" "}
-              Other
+              {chatIdx + 1}. {CHAT_LABEL}
             </Text>
           </Box>
-          {state.editingOther && (
-            <Box marginLeft={5} marginTop={0}>
-              <Text color={theme.inputPrompt} bold>{"❯ "}</Text>
-              <Text color={theme.text}>{state.otherText.slice(0, state.otherCursor)}</Text>
-              <Text inverse>
-                {state.otherCursor < state.otherText.length
-                  ? state.otherText[state.otherCursor]
-                  : " "}
-              </Text>
-              <Text color={theme.text}>{state.otherText.slice(state.otherCursor + 1)}</Text>
-            </Box>
-          )}
-        </Box>
-      )}
 
-      {/* Hints / Confirm bar */}
-      {submitPhase === "confirm" ? (
-        <Box marginTop={1}>
-          <Text color={theme.accent} bold>{"Submit: "}</Text>
-          <Text color={theme.success} bold>{"[s]"}</Text>
-          <Text color={theme.text}>{" Continue "}</Text>
-          <Text color={theme.accent} bold>{"[n]"}</Text>
-          <Text color={theme.text}>{" New Chat + Copy Plan "}</Text>
-          <Text color={theme.textDim}>{"[Esc] back"}</Text>
+          {/* "Skip interview and plan immediately" */}
+          <Box>
+            <Text color={state.selectedIdx === skipIdx ? theme.accent : theme.textDim}>
+              {state.selectedIdx === skipIdx ? "❯ " : "  "}
+            </Text>
+            <Text
+              color={state.selectedIdx === skipIdx ? theme.accent : theme.text}
+              bold={state.selectedIdx === skipIdx}
+            >
+              {skipIdx + 1}. {SKIP_LABEL}
+            </Text>
+          </Box>
         </Box>
-      ) : (
-        <Box marginTop={1}>
-          <Text color={theme.textDim}>
-            {"↑↓ navigate · Enter select"}
-            {question.multiSelect ? " · Space toggle" : ""}
-            {effectiveQuestions.length > 1 ? " · Tab/⇧Tab questions" : ""}
-            {" · "}
-          </Text>
-          <Text color={allAnswered ? theme.success : theme.textDim} bold={allAnswered}>
-            ^S accept
-          </Text>
-          <Text color={theme.textDim}>{" · ^D decline · Esc cancel"}</Text>
-        </Box>
-      )}
+      ) : null}
+
+      {/* Navigation hint bar */}
+      <Box marginTop={1}>
+        <Text color={theme.textDim}>
+          Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+        </Text>
+      </Box>
     </Box>
   );
 }
 
 // ── Helpers ───────────────────────────────────────────────
 
-function formatPlanSummary(questions: Question[], answers: Record<string, string>): string {
+export function formatPlanSummary(questions: Question[], answers: Record<string, string>): string {
   const lines = ["## Planning Context (from Q&A)", ""];
   for (const q of questions) {
     const answer = answers[q.question] ?? "No answer";

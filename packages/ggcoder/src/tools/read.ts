@@ -4,6 +4,12 @@ import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { resolvePath } from "./path-utils.js";
 import { truncateHead } from "./truncate.js";
+import { processImage } from "../utils/image.js";
+
+/** Image extensions that the read tool can render as image content blocks. */
+const IMAGE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+]);
 
 export const BINARY_EXTENSIONS = new Set([
   ".png",
@@ -13,6 +19,8 @@ export const BINARY_EXTENSIONS = new Set([
   ".bmp",
   ".ico",
   ".webp",
+  ".tiff",
+  ".tif",
   ".svg",
   ".mp3",
   ".mp4",
@@ -74,6 +82,22 @@ export function createReadTool(cwd: string, readFiles?: Set<string>): AgentTool<
       const resolved = resolvePath(cwd, file_path);
       readFiles?.add(resolved);
       const ext = path.extname(resolved).toLowerCase();
+
+      // Image files: read, process/resize, and return as image content block
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        const stat = await fs.stat(resolved);
+        const buffer = await fs.readFile(resolved);
+        const processed = await processImage(buffer);
+        const mediaType = processed.mediaType;
+        const data = processed.buffer.toString("base64");
+        const dimInfo = processed.dimensions
+          ? ` (${processed.dimensions.originalWidth}×${processed.dimensions.originalHeight})`
+          : "";
+        return {
+          content: `Image: ${resolved}${dimInfo}, ${stat.size} bytes`,
+          images: [{ type: "image" as const, mediaType, data }],
+        };
+      }
 
       if (BINARY_EXTENSIONS.has(ext)) {
         const stat = await fs.stat(resolved);

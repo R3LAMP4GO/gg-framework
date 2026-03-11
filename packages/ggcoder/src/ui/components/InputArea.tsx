@@ -2,7 +2,13 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Text, Box, useInput, useStdout, useApp } from "ink";
 import { useTheme } from "../theme/theme.js";
 import type { ImageAttachment } from "../../utils/image.js";
-import { extractImagePaths, readImageFile, getClipboardImage } from "../../utils/image.js";
+import {
+  extractImagePaths,
+  readImageFile,
+  getClipboardImage,
+  clipboardHasImage,
+  getNoImageMessage,
+} from "../../utils/image.js";
 import { SlashCommandMenu, filterCommands, type SlashCommandInfo } from "./SlashCommandMenu.js";
 
 const MAX_VISIBLE_LINES = 5;
@@ -12,6 +18,8 @@ interface InputAreaProps {
   onSubmit: (value: string, images: ImageAttachment[]) => void;
   onAbort: () => void;
   disabled?: boolean;
+  /** When true, input stays typeable but submissions are queued */
+  isAgentRunning?: boolean;
   isActive?: boolean;
   onDownAtEnd?: () => void;
   onShiftTab?: () => void;
@@ -71,6 +79,7 @@ export function InputArea({
   onSubmit,
   onAbort,
   disabled = false,
+  isAgentRunning = false,
   isActive = true,
   onDownAtEnd,
   onShiftTab,
@@ -84,7 +93,10 @@ export function InputArea({
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const historyRef = useRef<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+  const [imageStatus, setImageStatus] = useState<string | null>(null);
+  const pastingRef = useRef(false);
+  const historyRef = useRef<Array<{ text: string; images: ImageAttachment[] }>>([]);
   const historyIndexRef = useRef(-1);
   const lastEscRef = useRef(0);
   const { stdout } = useStdout();
@@ -130,6 +142,13 @@ export function InputArea({
     }, 530);
     return () => clearInterval(timer);
   }, [disabled]);
+
+  // Auto-clear image status message after 3 seconds
+  useEffect(() => {
+    if (!imageStatus) return;
+    const timer = setTimeout(() => setImageStatus(null), 3000);
+    return () => clearTimeout(timer);
+  }, [imageStatus]);
 
   // Auto-detect image paths as they're pasted/typed — debounce so full paste arrives
   const extractingRef = useRef(false);
@@ -188,29 +207,33 @@ export function InputArea({
           const selected = filteredCommands[Math.min(menuIndex, filteredCommands.length - 1)];
           const cmd = "/" + selected.name;
           // Submit the command directly
-          historyRef.current.push(cmd);
+          historyRef.current.push({ text: cmd, images: [] });
           historyIndexRef.current = -1;
           onSubmit(cmd, []);
           setValue("");
           setCursor(0);
           setImages([]);
+          setSelectedImageIndex(null);
           return;
         }
 
         const trimmed = value.trim();
         if (trimmed || images.length > 0) {
-          if (trimmed) historyRef.current.push(trimmed);
+          if (trimmed || images.length > 0) {
+            historyRef.current.push({ text: trimmed, images: [...images] });
+          }
           historyIndexRef.current = -1;
           onSubmit(trimmed, [...images]);
           setValue("");
           setCursor(0);
           setImages([]);
+          setSelectedImageIndex(null);
         }
         return;
       }
 
-      // Ctrl+Tab — toggle plan mode
-      if (key.ctrl && key.tab) {
+      // Option+Tab — toggle plan mode
+      if (key.meta && key.tab) {
         onTogglePlan?.();
         return;
       }
@@ -221,11 +244,49 @@ export function InputArea({
         return;
       }
 
-      // Ctrl+I — paste image from clipboard
+      // Ctrl+V — paste image from clipboard (like Claude Code)
+      // Check clipboard for image first; if none, let text paste through normally
+      if (key.ctrl && input === "v") {
+        if (pastingRef.current) return;
+        pastingRef.current = true;
+        clipboardHasImage()
+          .then(async (hasImage) => {
+            if (hasImage) {
+              const img = await getClipboardImage();
+              if (img) {
+                setImages((prev) => [...prev, img]);
+                setImageStatus(`📎 Image pasted`);
+              } else {
+                setImageStatus(getNoImageMessage());
+              }
+            }
+            // If no image on clipboard, do nothing — Ink handles text paste natively
+          })
+          .catch(() => {
+            // Clipboard check failed — ignore
+          })
+          .finally(() => {
+            pastingRef.current = false;
+          });
+        return;
+      }
+
+      // Ctrl+I — paste image from clipboard (alternative binding)
       if (key.ctrl && input === "i") {
-        getClipboardImage().then((img) => {
-          if (img) setImages((prev) => [...prev, img]);
-        });
+        if (pastingRef.current) return;
+        pastingRef.current = true;
+        getClipboardImage()
+          .then((img) => {
+            if (img) {
+              setImages((prev) => [...prev, img]);
+              setImageStatus(`📎 Image pasted`);
+            } else {
+              setImageStatus(getNoImageMessage());
+            }
+          })
+          .finally(() => {
+            pastingRef.current = false;
+          });
         return;
       }
 
@@ -255,6 +316,12 @@ export function InputArea({
       }
 
       if (key.backspace || key.delete) {
+        // Delete selected image
+        if (selectedImageIndex !== null) {
+          setImages((prev) => prev.filter((_, i) => i !== selectedImageIndex));
+          setSelectedImageIndex(null);
+          return;
+        }
         if (cursor > 0) {
           setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor));
           setCursor((c) => c - 1);
@@ -268,6 +335,15 @@ export function InputArea({
           setMenuIndex((i) => Math.max(0, i - 1));
           return;
         }
+        // Select images when cursor is at start of input and images are attached
+        if (images.length > 0 && cursor === 0) {
+          if (selectedImageIndex === null) {
+            setSelectedImageIndex(images.length - 1);
+          } else if (selectedImageIndex > 0) {
+            setSelectedImageIndex(selectedImageIndex - 1);
+          }
+          return;
+        }
         const history = historyRef.current;
         if (history.length === 0) return;
         const newIndex =
@@ -275,8 +351,11 @@ export function InputArea({
             ? history.length - 1
             : Math.max(0, historyIndexRef.current - 1);
         historyIndexRef.current = newIndex;
-        setValue(history[newIndex]);
-        setCursor(history[newIndex].length);
+        const entry = history[newIndex];
+        setValue(entry.text);
+        setCursor(entry.text.length);
+        setImages(entry.images);
+        setSelectedImageIndex(null);
         return;
       }
 
@@ -284,6 +363,11 @@ export function InputArea({
         // If slash menu is open, navigate it
         if (isSlashMode && filteredCommands.length > 0) {
           setMenuIndex((i) => Math.min(filteredCommands.length - 1, i + 1));
+          return;
+        }
+        // Deselect image on down arrow
+        if (selectedImageIndex !== null) {
+          setSelectedImageIndex(null);
           return;
         }
         const history = historyRef.current;
@@ -296,15 +380,23 @@ export function InputArea({
           historyIndexRef.current = -1;
           setValue("");
           setCursor(0);
+          setImages([]);
         } else {
           historyIndexRef.current = newIndex;
-          setValue(history[newIndex]);
-          setCursor(history[newIndex].length);
+          const entry = history[newIndex];
+          setValue(entry.text);
+          setCursor(entry.text.length);
+          setImages(entry.images);
+          setSelectedImageIndex(null);
         }
         return;
       }
 
       if (key.escape) {
+        if (selectedImageIndex !== null) {
+          setSelectedImageIndex(null);
+          return;
+        }
         const now = Date.now();
         if (value && now - lastEscRef.current < 400) {
           setValue("");
@@ -331,16 +423,27 @@ export function InputArea({
       }
 
       if (key.leftArrow) {
+        // Navigate between selected images
+        if (selectedImageIndex !== null && images.length > 1) {
+          setSelectedImageIndex((i) => (i !== null && i > 0 ? i - 1 : i));
+          return;
+        }
         if (cursor > 0) setCursor((c) => c - 1);
         return;
       }
 
       if (key.rightArrow) {
+        // Navigate between selected images
+        if (selectedImageIndex !== null && images.length > 1) {
+          setSelectedImageIndex((i) => (i !== null && i < images.length - 1 ? i + 1 : i));
+          return;
+        }
         if (cursor < value.length) setCursor((c) => c + 1);
         return;
       }
 
       if (input) {
+        setSelectedImageIndex(null);
         setValue((v) => v.slice(0, cursor) + input + v.slice(cursor));
         setCursor((c) => c + input.length);
       }
@@ -444,7 +547,26 @@ export function InputArea({
       >
         {images.length > 0 && (
           <Box>
-            <Text color={theme.accent}>{images.map((_, i) => `[Image #${i + 1}]`).join(" ")}</Text>
+            {images.map((_, i) => (
+              <Text
+                key={i}
+                color={i === selectedImageIndex ? theme.text : theme.accent}
+                backgroundColor={i === selectedImageIndex ? theme.error : undefined}
+                bold={i === selectedImageIndex}
+                underline={i !== selectedImageIndex}
+              >
+                {i > 0 ? " " : ""}
+                {`[Image #${i + 1}]`}
+              </Text>
+            ))}
+            {selectedImageIndex === null ? (
+              <Text color={theme.textDim}>{" (↑ to select)"}</Text>
+            ) : (
+              <Text color={theme.textDim}>
+                {images.length > 1 ? " → to next · ← to prev · " : " "}
+                {"Delete to remove · Esc to cancel"}
+              </Text>
+            )}
           </Box>
         )}
         {displayLines.map((line, i) => {
@@ -546,6 +668,43 @@ export function InputArea({
           );
         })}
       </Box>
+      {/* Image paste status message */}
+      {imageStatus && (
+        <Box paddingLeft={1}>
+          <Text color={theme.textDim}>{imageStatus}</Text>
+        </Box>
+      )}
+      {/* Queue hint — shown when agent is running and user has typed something */}
+      {isAgentRunning && !disabled && value.length > 0 && !imageStatus && (
+        <Box paddingLeft={1}>
+          <Text color={theme.warning ?? theme.accent}>{"⏳ Enter to queue — will send after current task"}</Text>
+        </Box>
+      )}
+      {/* Hints — shown when input is empty and not disabled */}
+      {!disabled && value.length === 0 && !isSlashMode && !imageStatus && (
+        <Box paddingLeft={1}>
+          {isAgentRunning ? (
+            <Text color={theme.textDim}>{"Type to queue a message…"}</Text>
+          ) : (
+            <>
+              <Text color={theme.textDim}>
+                {"⌥Tab "}
+              </Text>
+              <Text color={theme.border}>{"plan"}</Text>
+              <Text color={theme.textDim}>{" · "}</Text>
+              <Text color={theme.textDim}>
+                {"⇧` "}
+              </Text>
+              <Text color={theme.border}>{"tasks"}</Text>
+              <Text color={theme.textDim}>{" · "}</Text>
+              <Text color={theme.textDim}>
+                {"/ "}
+              </Text>
+              <Text color={theme.border}>{"commands"}</Text>
+            </>
+          )}
+        </Box>
+      )}
       {/* Slash command menu — shown below the input box */}
       {isSlashMode && !disabled && filteredCommands.length > 0 && (
         <SlashCommandMenu commands={commands} filter={slashFilter} selectedIndex={menuIndex} />
