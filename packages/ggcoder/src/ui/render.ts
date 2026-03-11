@@ -7,8 +7,10 @@ import type { ProcessManager } from "../core/process-manager.js";
 import type { PlanModeManager } from "../core/plan-mode.js";
 import type { AgentDefinition } from "../core/agents.js";
 import type { MCPClientManager } from "../core/mcp/index.js";
+import type { AuthStorage } from "../core/auth-storage.js";
 import { App, type CompletedItem } from "./App.js";
 import { ThemeContext, loadTheme } from "./theme/theme.js";
+import { detectTheme } from "./theme/detect-theme.js";
 
 export interface RenderAppConfig {
   provider: Provider;
@@ -23,7 +25,7 @@ export interface RenderAppConfig {
   accountId?: string;
   cwd: string;
   version: string;
-  theme?: "dark" | "light";
+  theme?: "auto" | "dark" | "light";
   showThinking?: boolean;
   showTokenUsage?: boolean;
   onSlashCommand?: (input: string) => Promise<string | null>;
@@ -37,10 +39,13 @@ export interface RenderAppConfig {
   agents?: AgentDefinition[];
   settingsFile?: string;
   mcpManager?: MCPClientManager;
+  authStorage?: AuthStorage;
 }
 
 export async function renderApp(config: RenderAppConfig): Promise<void> {
-  const theme = loadTheme(config.theme ?? "dark");
+  const themeSetting = config.theme ?? "auto";
+  const resolvedTheme = themeSetting === "auto" ? await detectTheme() : themeSetting;
+  const theme = loadTheme(resolvedTheme);
 
   // Clear screen
   process.stdout.write("\x1b[2J\x1b[H");
@@ -75,6 +80,7 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
         agents: config.agents,
         settingsFile: config.settingsFile,
         mcpManager: config.mcpManager,
+        authStorage: config.authStorage,
       }),
     ),
     {

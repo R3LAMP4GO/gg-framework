@@ -135,11 +135,14 @@ function main(): void {
   let savedProvider: "anthropic" | "openai" | "glm" | "moonshot" | "ollama" | undefined;
   let savedModel: string | undefined;
   let savedThinkingEnabled = false;
+  let savedTheme: "auto" | "dark" | "light" = "auto";
   try {
     const raw = JSON.parse(fs.readFileSync(getAppPaths().settingsFile, "utf-8"));
     if (raw.defaultProvider) savedProvider = raw.defaultProvider;
     if (raw.defaultModel) savedModel = raw.defaultModel;
     if (raw.thinkingEnabled === true) savedThinkingEnabled = true;
+    if (raw.theme === "dark" || raw.theme === "light" || raw.theme === "auto")
+      savedTheme = raw.theme;
   } catch {
     // No settings file or invalid JSON — use defaults
   }
@@ -245,6 +248,7 @@ function main(): void {
     systemPrompt: values["system-prompt"],
     continueRecent,
     sessionPath: values.session,
+    theme: savedTheme,
   }).catch((err) => {
     log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
     closeLogger();
@@ -264,6 +268,7 @@ async function runInkTUI(opts: {
   systemPrompt?: string;
   continueRecent?: boolean;
   sessionPath?: string;
+  theme?: "auto" | "dark" | "light";
 }): Promise<void> {
   const { provider, model, cwd } = opts;
 
@@ -403,6 +408,7 @@ async function runInkTUI(opts: {
     baseUrl: opts.baseUrl,
     accountId: creds.accountId,
     cwd,
+    theme: opts.theme,
     loggedInProviders,
     credentialsByProvider,
     initialHistory,
@@ -413,6 +419,7 @@ async function runInkTUI(opts: {
     agents,
     settingsFile: paths.settingsFile,
     mcpManager,
+    authStorage,
   });
 
   closeLogger();
