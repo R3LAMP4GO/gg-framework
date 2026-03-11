@@ -91,18 +91,22 @@ export function createSubAgentTool(
   return {
     name: "subagent",
     description:
-      `Spawn an isolated sub-agent with its own context window. Use for:\n` +
-      `- Parallel exploration: spawn "explore" agents for codebase search\n` +
-      `- Parallel execution: spawn multiple agents for independent tasks\n` +
-      `- Isolation: keep large outputs out of main context\n\n` +
+      `Spawn an isolated sub-agent. IMPORTANT: Each spawn creates a new process with its own context — ` +
+      `there is real overhead. Do NOT spawn an agent when you can accomplish the task yourself ` +
+      `with 1-3 tool calls (grep, find, read). Only spawn when:\n` +
+      `- You need PARALLEL execution of 2+ independent tasks\n` +
+      `- The task requires 5+ tool calls and the output would bloat your context\n` +
+      `- You need deep research across many files in unfamiliar code\n\n` +
+      `Do NOT spawn when:\n` +
+      `- A single grep + read answers the question\n` +
+      `- You already have the relevant files in context\n` +
+      `- You need the result for your very next edit (round-trip overhead wastes tokens)\n` +
+      `- The task is trivial (finding a file, checking a type, reading a config)\n\n` +
       `Built-in agents:\n` +
-      `- explore: Fast, read-only codebase search (uses cheapest model). ` +
-      `Specify thoroughness: "quick", "medium", or "very thorough"\n` +
-      `- plan: Software architect for implementation planning (read-only)\n` +
-      `- worker: General-purpose agent for complex multi-step tasks\n` +
-      `- fork: Isolated worker for parallel task execution with structured output\n\n` +
-      `Prefer "explore" for any file search, code search, or codebase questions.\n` +
-      `Prefer spawning parallel agents when tasks are independent.` +
+      `- explore: Read-only codebase search (cheapest model). For broad searches across many files.\n` +
+      `- plan: Architecture/planning (read-only)\n` +
+      `- worker: Full-capability for complex multi-step tasks\n` +
+      `- fork: Parallel execution — each fork handles one unit of work` +
       agentDesc,
     parameters: SubAgentParams,
     async execute(args, context) {
