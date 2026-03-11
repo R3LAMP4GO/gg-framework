@@ -12,10 +12,12 @@
  * Enter on option 4 submits the feedback. Text is preserved when navigating away.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTheme } from "../theme/theme.js";
 import path from "node:path";
+
+const BORDER_COLORS = ["#60a5fa", "#818cf8", "#a78bfa", "#818cf8", "#60a5fa"];
 
 export interface PlanOverlayProps {
   planContent: string;
@@ -50,6 +52,15 @@ export function PlanOverlay({
   const [cursor, setCursor] = useState(0);
 
   const isOnFeedback = selected === FEEDBACK_IDX;
+
+  // Animated border color cycle — same as thinking border in InputArea
+  const [borderFrame, setBorderFrame] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setBorderFrame((f) => (f + 1) % BORDER_COLORS.length);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useInput(
     useCallback(
@@ -180,26 +191,28 @@ export function PlanOverlay({
 
   return (
     <Box flexDirection="column">
-      {/* Separator */}
-      <Box marginBottom={1}>
-        <Text color={theme.textDim}>{"─".repeat(72)}</Text>
-      </Box>
+      {/* Plan content in animated border box */}
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={BORDER_COLORS[borderFrame]}
+        paddingLeft={1}
+        paddingRight={1}
+        marginBottom={1}
+      >
+        {/* Header */}
+        <Box marginBottom={1}>
+          <Text color={theme.accent} bold>
+            Here is GG Coder&apos;s plan:
+          </Text>
+        </Box>
 
-      {/* Header */}
-      <Box marginBottom={1}>
-        <Text color={theme.accent}>Here is GG Coder&apos;s plan:</Text>
-      </Box>
-
-      {/* Full plan content */}
-      <Box flexDirection="column" marginBottom={1} paddingLeft={1}>
-        <Text color={theme.text} wrap="wrap">
-          {planContent}
-        </Text>
-      </Box>
-
-      {/* Separator */}
-      <Box marginBottom={1}>
-        <Text color={theme.textDim}>{"─".repeat(72)}</Text>
+        {/* Full plan content */}
+        <Box flexDirection="column">
+          <Text color={theme.text} wrap="wrap">
+            {planContent}
+          </Text>
+        </Box>
       </Box>
 
       {/* Prompt */}
