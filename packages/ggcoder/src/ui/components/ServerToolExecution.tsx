@@ -79,30 +79,4 @@ function getHeader(name: string, input: unknown): { label: string; detail: strin
   return { label: name, detail: "" };
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max - 1) + "…" : text;
-}
 
-function extractDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
-interface WebSearchResult {
-  type: string;
-  title?: string;
-  url?: string;
-}
-
-function getSearchResults(resultType: string | undefined, data: unknown): WebSearchResult[] | null {
-  if (resultType !== "web_search_tool_result") return null;
-
-  const raw = data as Record<string, unknown>;
-  const content = raw.content as WebSearchResult[] | undefined;
-  if (!Array.isArray(content)) return null;
-
-  return content.filter((item) => item.type === "web_search_result" && item.title);
-}

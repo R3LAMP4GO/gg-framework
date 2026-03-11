@@ -376,6 +376,10 @@ export function InputArea({
           setSelectedImageIndex(null);
           return;
         }
+        // Exit collapsed paste view so user can see and edit the actual text
+        if (pasteText) {
+          setPasteText("");
+        }
         if (cursor > 0) {
           setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor));
           setCursor((c) => c - 1);
@@ -391,8 +395,8 @@ export function InputArea({
           setMenuIndex((i) => Math.max(0, i - 1));
           return;
         }
-        // Select images when cursor is at start of input and images are attached
-        if (images.length > 0 && cursor === 0) {
+        // Select/cycle images when images are attached
+        if (images.length > 0) {
           if (selectedImageIndex === null) {
             setSelectedImageIndex(images.length - 1);
           } else if (selectedImageIndex > 0) {
@@ -514,6 +518,10 @@ export function InputArea({
         // Detect paste: Ink delivers pasted text as input.length > 1
         // For large pastes, Ink may split into multiple chunks, so we
         // accumulate and debounce to capture the full paste.
+        // Single-character input means the user is typing — exit collapsed paste view
+        if (input.length === 1 && pasteText) {
+          setPasteText("");
+        }
         if (input.length > 1) {
           setPasteText((prev) => {
             if (!prev) setPasteOffset(cursor); // record where paste starts on first chunk

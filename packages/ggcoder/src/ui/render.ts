@@ -1,7 +1,7 @@
 import React from "react";
 import { render } from "ink";
 import chalk from "chalk";
-import type { Message, Provider, ServerToolDefinition, ThinkingLevel } from "@kenkaiiii/gg-ai";
+import type { Message, Provider, ThinkingLevel } from "@kenkaiiii/gg-ai";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
 import type { PlanModeManager } from "../core/plan-mode.js";

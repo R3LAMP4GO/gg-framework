@@ -370,7 +370,7 @@ export async function compact(
 export async function compactForPlanTransition(
   messages: Message[],
   planContent: string,
-  options: {
+  _options: {
     provider: Provider;
     model: string;
     apiKey?: string;

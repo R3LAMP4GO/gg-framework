@@ -55,7 +55,7 @@ export function QuestionOverlay({
   onAccept,
   onDecline,
   onCancel,
-  onClearContext,
+  onClearContext: _onClearContext,
 }: QuestionOverlayProps) {
   const theme = useTheme();
 

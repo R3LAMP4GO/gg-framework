@@ -9,7 +9,7 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bm
 const TEXT_EXTENSIONS = new Set([".md", ".txt"]);
 const ATTACHABLE_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...TEXT_EXTENSIONS]);
 
-const MEDIA_TYPES: Record<string, string> = {
+const _MEDIA_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -59,15 +59,6 @@ export function detectMediaType(buffer: Buffer): string {
   return "image/png";
 }
 
-/** Detect media type from a base64 string. */
-function detectMediaTypeFromBase64(data: string): string {
-  try {
-    return detectMediaType(Buffer.from(data, "base64"));
-  } catch {
-    return "image/png";
-  }
-}
-
 async function loadSharp(): Promise<typeof import("sharp") | null> {
   try {
     return (await import("sharp")).default;
@@ -82,7 +73,7 @@ interface ProcessedImage {
   dimensions?: ImageDimensions;
 }
 
-export async function processImage(buffer: Buffer, originalFormat?: string): Promise<ProcessedImage> {
+export async function processImage(buffer: Buffer, _originalFormat?: string): Promise<ProcessedImage> {
   const sharp = await loadSharp();
   const detectedType = detectMediaType(buffer);
   const format = detectedType.split("/")[1] === "jpeg" ? "jpeg" : detectedType.split("/")[1];
@@ -523,6 +514,16 @@ async function execSafe(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: 5000 });
+    return { exitCode: 0, stdout, stderr };
+  } catch (err: any) {
+    return {
+      exitCode: err.code ?? 1,
+      stdout: err.stdout ?? "",
+      stderr: err.stderr ?? "",
+    };
+  }
+}
+, { timeout: 5000 });
     return { exitCode: 0, stdout, stderr };
   } catch (err: any) {
     return {
