@@ -278,6 +278,16 @@ export function createBuiltinCommands(): SlashCommand[] {
       },
     },
     {
+      name: "mcp",
+      aliases: [],
+      description: "Manage MCP servers",
+      usage: "/mcp",
+      execute() {
+        // Handled by the UI overlay in App.tsx — this fallback is for non-interactive mode
+        return "Use /mcp in interactive mode to manage MCP servers.";
+      },
+    },
+    {
       name: "agents",
       aliases: [],
       description: "List available agents",

@@ -13,17 +13,50 @@ interface ConnectedServer {
   transport: StreamableHTTPClientTransport | SSEClientTransport | StdioClientTransport;
 }
 
+export interface MCPServerStatus {
+  config: MCPServerConfig;
+  status: "connected" | "failed" | "disabled";
+  error?: string;
+}
+
 export class MCPClientManager {
   private servers: ConnectedServer[] = [];
   private elicitationHandler: ElicitationHandler | null = null;
+  private serverStatuses: MCPServerStatus[] = [];
+  private lastConfigs: MCPServerConfig[] = [];
 
   /** Register a handler for MCP elicitation/create requests */
   setElicitationHandler(handler: ElicitationHandler | null): void {
     this.elicitationHandler = handler;
   }
 
+  /** Get the configs that were last passed to connectAll */
+  getConfigs(): MCPServerConfig[] {
+    return this.lastConfigs;
+  }
+
+  /** Get connection status for all servers */
+  getServerStatuses(): MCPServerStatus[] {
+    return this.serverStatuses;
+  }
+
+  /** Get names of currently connected servers */
+  getConnectedServerNames(): string[] {
+    return this.servers.map((s) => s.name);
+  }
+
   async connectAll(configs: MCPServerConfig[]): Promise<AgentTool[]> {
+    this.lastConfigs = configs;
+    this.serverStatuses = [];
+
     const enabled = configs.filter((c) => c.enabled !== false);
+    const disabled = configs.filter((c) => c.enabled === false);
+
+    // Track disabled servers
+    for (const config of disabled) {
+      this.serverStatuses.push({ config, status: "disabled" });
+    }
+
     if (enabled.length === 0) return [];
 
     const results = await Promise.allSettled(enabled.map((c) => this.connectServer(c)));
@@ -33,10 +66,13 @@ export class MCPClientManager {
       const result = results[i];
       if (result.status === "fulfilled") {
         tools.push(...result.value);
+        this.serverStatuses.push({ config: enabled[i], status: "connected" });
       } else {
+        const error = String(result.reason);
         log("WARN", "mcp", `Failed to connect to MCP server "${enabled[i].name}"`, {
-          error: String(result.reason),
+          error,
         });
+        this.serverStatuses.push({ config: enabled[i], status: "failed", error });
       }
     }
 

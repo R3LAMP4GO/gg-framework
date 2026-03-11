@@ -27,6 +27,7 @@ import { Banner } from "./components/Banner.js";
 import { ModelSelector } from "./components/ModelSelector.js";
 import { TaskOverlay } from "./components/TaskOverlay.js";
 import { AgentsOverlay } from "./components/AgentsOverlay.js";
+import { McpOverlay } from "./components/McpOverlay.js";
 import { BUILTIN_AGENTS } from "../core/builtin-agents.js";
 import { discoverAgents } from "../core/agents.js";
 import { getAppPaths } from "../config.js";
@@ -401,7 +402,7 @@ export function App(props: AppProps) {
   }, [isRestoredSession, props.initialHistory]);
   // Items from the current/last turn — rendered in the live area so they stay visible
   const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
-  const [overlay, setOverlay] = useState<"model" | "tasks" | "agents" | null>(null);
+  const [overlay, setOverlay] = useState<"model" | "tasks" | "agents" | "mcp" | null>(null);
   const [agentsList, setAgentsList] = useState<AgentDefinition[]>(props.agents ?? []);
   const [taskCount, setTaskCount] = useState(() => getTaskCount(props.cwd));
   const [runAllTasks, setRunAllTasks] = useState(false);
@@ -1118,6 +1119,13 @@ export function App(props: AppProps) {
         return;
       }
 
+      // Handle /mcp — open MCP server manager overlay
+      if (trimmed === "/mcp") {
+        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+        setOverlay("mcp");
+        return;
+      }
+
       // Handle /copy — copy last assistant response to clipboard
       if (trimmed === "/copy") {
         const allItems = [...history, ...liveItems];
@@ -1607,6 +1615,7 @@ export function App(props: AppProps) {
       { name: "clear", aliases: [], description: "Clear session and terminal" },
       { name: "copy", aliases: [], description: "Copy last response to clipboard" },
       { name: "plan", aliases: [], description: "Toggle plan mode (read-only exploration)" },
+      { name: "mcp", aliases: [], description: "Manage MCP servers" },
       { name: "quit", aliases: ["q", "exit"], description: "Exit the agent" },
       // Built-in prompt commands, excluding any overridden by custom commands
       ...PROMPT_COMMANDS.filter((cmd) => !customNames.has(cmd.name)).map((cmd) => ({
@@ -1810,7 +1819,7 @@ export function App(props: AppProps) {
     runAllTasksRef.current = runAllTasks;
   }, [runAllTasks]);
 
-  const isFullscreenOverlay = overlay === "tasks" || overlay === "agents";
+  const isFullscreenOverlay = overlay === "tasks" || overlay === "agents" || overlay === "mcp";
 
   return (
     <Box flexDirection="column">
@@ -1862,6 +1871,16 @@ export function App(props: AppProps) {
               process.stdin.setRawMode(true);
               process.stdin.resume();
             }
+          }}
+        />
+      ) : overlay === "mcp" && props.mcpManager ? (
+        <McpOverlay
+          mcpManager={props.mcpManager}
+          provider={currentProvider}
+          onClose={() => {
+            stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+            setStaticKey((k) => k + 1);
+            setOverlay(null);
           }}
         />
       ) : overlay === "tasks" ? (
@@ -2087,7 +2106,7 @@ export function App(props: AppProps) {
             onAbort={handleAbort}
             disabled={!!pendingQuestions}
             isAgentRunning={agentLoop.isRunning}
-            isActive={!taskBarFocused && !pendingQuestions && !overlay}
+            isActive={!taskBarFocused && !pendingQuestions && !overlay && !showPlanReview}
             onDownAtEnd={handleFocusTaskBar}
             onShiftTab={handleShiftTabCycle}
             onTogglePlan={handleTogglePlan}
