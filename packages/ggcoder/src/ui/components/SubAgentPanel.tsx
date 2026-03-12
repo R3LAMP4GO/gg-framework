@@ -141,21 +141,8 @@ export function SubAgentPanel({ agents, aborted = false }: SubAgentPanelProps) {
       ? `${agents.length} agent${agents.length !== 1 ? "s" : ""} completed`
       : `${agents.length} agent${agents.length !== 1 ? "s" : ""} launched`;
 
-  // Stable height: track the peak number of agents so the panel never shrinks
-  // when agents complete. This prevents Ink's live-area height from fluctuating,
-  // which causes viewport jumping during rapid re-renders.
-  const peakAgentCount = React.useRef(0);
-  if (agents.length > peakAgentCount.current) {
-    peakAgentCount.current = agents.length;
-  }
-
-  // Each agent row is 2 lines (task + detail), plus 1 line for the header.
-  // Reserve height based on peak count so the panel never shrinks mid-execution.
-  const hasRunning = agents.some((a) => a.status === "running");
-  const stableMinHeight = hasRunning ? 1 + peakAgentCount.current * 2 : undefined;
-
   return (
-    <Box marginTop={1} minHeight={stableMinHeight}>
+    <Box marginTop={1}>
       <Text color={theme.primary}>{"⏺ "}</Text>
       <Box flexDirection="column" flexShrink={1}>
         <Text bold>{headerText}</Text>

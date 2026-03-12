@@ -6,14 +6,6 @@ import { highlightCode, langFromPath } from "../utils/highlight.js";
 
 const MAX_OUTPUT_LINES = 4;
 
-// Tools that typically show a multi-line body when done (header + summary +
-// diff/result lines).  While these tools are running we reserve height so the
-// live area doesn't jump from 1 line (spinner) to 6+ lines (result), which
-// causes Ink's cursor math to misalign and the viewport to jump.
-// Height = 1 header + 1 summary + MAX_OUTPUT_LINES body + 1 hidden-count line.
-const BODY_TOOLS = new Set(["edit", "bash", "grep", "find", "ls", "tasks"]);
-const RUNNING_MIN_HEIGHT = 1 + 1 + MAX_OUTPUT_LINES + 1;
-
 interface ToolRunningProps {
   status: "running";
   name: string;
@@ -45,11 +37,8 @@ export function ToolExecution(props: ToolExecutionProps) {
 
   if (props.status === "running") {
     const { label, detail } = getToolHeaderParts(props.name, props.args);
-    // Reserve height for tools that will show a multi-line body when done,
-    // preventing the live area from jumping when the result arrives.
-    const reserveHeight = BODY_TOOLS.has(props.name) ? RUNNING_MIN_HEIGHT : undefined;
     return (
-      <Box marginTop={1} minHeight={reserveHeight}>
+      <Box marginTop={1}>
         <Spinner label={detail ? `${label}(${detail})` : label} />
       </Box>
     );

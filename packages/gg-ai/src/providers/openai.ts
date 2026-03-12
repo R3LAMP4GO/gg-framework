@@ -12,7 +12,8 @@ import {
 
 export function streamOpenAI(options: StreamOptions): StreamResult {
   const result = new StreamResult();
-  runStream(options, result).catch((err) => result.abort(toError(err)));
+  const providerName = options.provider ?? "openai";
+  runStream(options, result).catch((err) => result.abort(toError(err, providerName)));
   return result;
 }
 
@@ -25,16 +26,18 @@ async function runStream(options: StreamOptions, result: StreamResult): Promise<
   // GLM and Moonshot use a custom `thinking` body param instead of `reasoning_effort`
   const usesThinkingParam = options.provider === "glm" || options.provider === "moonshot";
 
-  const messages = toOpenAIMessages(options.messages);
+  const messages = toOpenAIMessages(options.messages, { provider: options.provider });
+
+  // GLM models default to 0.6 temperature when not in thinking mode
+  const defaultTemp = options.provider === "glm" ? 0.6 : undefined;
+  const effectiveTemp = options.temperature ?? defaultTemp;
 
   const params: OpenAI.ChatCompletionCreateParams = {
     model: options.model,
     messages,
     stream: true,
     ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-    ...(options.temperature != null && !options.thinking
-      ? { temperature: options.temperature }
-      : {}),
+    ...(effectiveTemp != null && !options.thinking ? { temperature: effectiveTemp } : {}),
     ...(options.topP != null ? { top_p: options.topP } : {}),
     ...(options.stop ? { stop: options.stop } : {}),
     ...(options.thinking && !usesThinkingParam
@@ -187,7 +190,7 @@ async function runStream(options: StreamOptions, result: StreamResult): Promise<
   result.complete(response);
 }
 
-function toError(err: unknown): ProviderError {
+function toError(err: unknown, provider: string = "openai"): ProviderError {
   if (err instanceof OpenAI.APIError) {
     // Include full error body for debugging — GLM/Moonshot use non-standard error shapes
     let msg = err.message;
@@ -196,13 +199,13 @@ function toError(err: unknown): ProviderError {
       // Append raw error body so debug logs capture the exact API response
       msg += ` | body: ${JSON.stringify(body)}`;
     }
-    return new ProviderError("openai", msg, {
+    return new ProviderError(provider, msg, {
       statusCode: err.status,
       cause: err,
     });
   }
   if (err instanceof Error) {
-    return new ProviderError("openai", err.message, { cause: err });
+    return new ProviderError(provider, err.message, { cause: err });
   }
-  return new ProviderError("openai", String(err));
+  return new ProviderError(provider, String(err));
 }

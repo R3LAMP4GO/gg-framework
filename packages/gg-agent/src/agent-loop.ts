@@ -83,8 +83,10 @@ export async function* agentLoop(
   let consecutivePauses = 0;
   let overflowRetries = 0;
   let overloadRetries = 0;
+  let emptyResponseRetries = 0;
   const MAX_OVERFLOW_RETRIES = 3;
   const MAX_OVERLOAD_RETRIES = 3;
+  const MAX_EMPTY_RESPONSE_RETRIES = 3;
   const OVERLOAD_RETRY_DELAY_MS = 3_000;
 
   while (turn < maxTurns) {
@@ -177,6 +179,23 @@ export async function* agentLoop(
     // Reset retry counters after successful call
     overflowRetries = 0;
     overloadRetries = 0;
+
+    // Detect empty/degenerate responses — the API occasionally returns 0 tokens
+    // with no content (e.g. stream interruption, transient server issue).
+    // Retry instead of treating as completion.
+    if (
+      response.usage.outputTokens === 0 &&
+      (response.message.content === "" ||
+        (Array.isArray(response.message.content) && response.message.content.length === 0))
+    ) {
+      if (emptyResponseRetries < MAX_EMPTY_RESPONSE_RETRIES) {
+        emptyResponseRetries++;
+        turn--; // Don't count the failed turn
+        continue;
+      }
+      // Exhausted retries — fall through and let the agent finish
+    }
+    emptyResponseRetries = 0;
 
     // Accumulate usage
     totalUsage.inputTokens += response.usage.inputTokens;
