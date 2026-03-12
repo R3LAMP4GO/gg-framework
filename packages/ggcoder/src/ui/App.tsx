@@ -84,6 +84,13 @@ function getProviderErrorHint(message: string): string | null {
   if (lower.includes("500") && lower.includes("internal server error")) {
     return "The provider experienced an internal error. This is not a ggcoder issue.";
   }
+  if (
+    lower.includes("does not recognize the requested model") ||
+    (lower.includes("model") &&
+      (lower.includes("not exist") || lower.includes("not found") || lower.includes("no access")))
+  ) {
+    return "Use /model to switch to a different model, or check that your account has access to the requested model.";
+  }
   return null;
 }
 
