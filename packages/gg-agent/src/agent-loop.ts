@@ -37,11 +37,29 @@ export function isContextOverflow(err: unknown): boolean {
 }
 
 /**
+ * Detect billing/quota errors — these should NOT be retried.
+ * GLM returns HTTP 429 with "Insufficient balance" for quota exhaustion.
+ */
+export function isBillingError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("insufficient balance") ||
+    msg.includes("no resource package") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("billing") ||
+    msg.includes("recharge")
+  );
+}
+
+/**
  * Detect overloaded/rate-limit errors from LLM providers.
  * HTTP 429 (rate limit) or 529/503 (overloaded).
+ * Excludes billing/quota errors which won't resolve with a retry.
  */
 export function isOverloaded(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  if (isBillingError(err)) return false;
   const msg = err.message.toLowerCase();
   return (
     msg.includes("overloaded") ||
@@ -192,8 +210,13 @@ export async function* agentLoop(
     }
     consecutivePauses = 0;
 
-    // If not tool_use, we're done
-    if (response.stopReason !== "tool_use") {
+    // Extract tool calls — separate client-executed from provider built-in (e.g. Moonshot $web_search)
+    const allToolCalls = extractToolCalls(response.message.content);
+
+    // If no tool calls to execute, we're done.
+    // Check content (not just stopReason) because some providers (e.g. GLM)
+    // return finish_reason="stop" even when tool calls are present.
+    if (response.stopReason !== "tool_use" && allToolCalls.length === 0) {
       yield {
         type: "agent_done" as const,
         totalTurns: turn,
@@ -205,9 +228,6 @@ export async function* agentLoop(
         totalUsage: { ...totalUsage },
       };
     }
-
-    // Extract tool calls — separate client-executed from provider built-in (e.g. Moonshot $web_search)
-    const allToolCalls = extractToolCalls(response.message.content);
     const toolCalls: ToolCall[] = [];
     const toolResults: ToolResult[] = [];
 
@@ -299,8 +319,9 @@ export async function* agentLoop(
     Promise.all(executions)
       .then((results) => {
         if (toolResultsFinalized) return;
+        const resultsMap = new Map(results.map((r) => [r.toolCallId, r]));
         for (const tc of toolCalls) {
-          const r = results.find((x) => x.toolCallId === tc.id)!;
+          const r = resultsMap.get(tc.id)!;
           toolResults.push({
             type: "tool_result",
             toolCallId: tc.id,
@@ -329,8 +350,9 @@ export async function* agentLoop(
       // Without this, an aborted turn leaves an orphaned tool_use in the
       // message history which causes Anthropic API 400 errors on the next
       // request.
+      const resolvedIds = new Set(toolResults.map((r) => r.toolCallId));
       for (const tc of toolCalls) {
-        if (!toolResults.some((r) => r.toolCallId === tc.id)) {
+        if (!resolvedIds.has(tc.id)) {
           toolResults.push({
             type: "tool_result",
             toolCallId: tc.id,

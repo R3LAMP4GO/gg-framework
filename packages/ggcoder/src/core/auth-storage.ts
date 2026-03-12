@@ -10,6 +10,8 @@ export class AuthStorage {
   private data: AuthData = {};
   private filePath: string;
   private loaded = false;
+  /** Per-provider lock to serialize concurrent refresh calls. */
+  private refreshLocks = new Map<string, Promise<OAuthCredentials>>();
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? getAppPaths().authFile;
@@ -82,15 +84,27 @@ export class AuthStorage {
       return creds;
     }
 
-    // Refresh (preserve accountId if not returned by refresh)
-    const refreshFn = provider === "anthropic" ? refreshAnthropicToken : refreshOpenAIToken;
-    const refreshed = await refreshFn(creds.refreshToken);
-    if (!refreshed.accountId && creds.accountId) {
-      refreshed.accountId = creds.accountId;
+    // Serialize concurrent refresh calls per provider to avoid races
+    const existing = this.refreshLocks.get(provider);
+    if (existing) return existing;
+
+    const refreshPromise = (async () => {
+      const refreshFn = provider === "anthropic" ? refreshAnthropicToken : refreshOpenAIToken;
+      const refreshed = await refreshFn(creds.refreshToken);
+      if (!refreshed.accountId && creds.accountId) {
+        refreshed.accountId = creds.accountId;
+      }
+      this.data[provider] = refreshed;
+      await this.save();
+      return refreshed;
+    })();
+
+    this.refreshLocks.set(provider, refreshPromise);
+    try {
+      return await refreshPromise;
+    } finally {
+      this.refreshLocks.delete(provider);
     }
-    this.data[provider] = refreshed;
-    await this.save();
-    return refreshed;
   }
 
   /**

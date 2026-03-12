@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
-import { resolvePath } from "./path-utils.js";
+import { resolvePath, rejectSymlink } from "./path-utils.js";
 import { truncateHead } from "./truncate.js";
 import { processImage } from "../utils/image.js";
 
@@ -96,6 +96,7 @@ export function createReadTool(cwd: string, readFiles?: Set<string>): AgentTool<
     parameters: ReadParams,
     async execute({ file_path, offset, limit }) {
       const resolved = resolvePath(cwd, file_path);
+      await rejectSymlink(resolved);
       readFiles?.add(resolved);
       const ext = path.extname(resolved).toLowerCase();
 

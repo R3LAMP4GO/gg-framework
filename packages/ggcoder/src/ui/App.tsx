@@ -71,6 +71,14 @@ function getProviderErrorHint(message: string): string | null {
     return "This is a provider-side issue — their servers are under heavy load. Try again in a moment.";
   }
   if (
+    lower.includes("insufficient balance") ||
+    lower.includes("no resource package") ||
+    lower.includes("quota exceeded") ||
+    lower.includes("recharge")
+  ) {
+    return "The provider reports a billing or quota issue. Check your account balance or resource package.";
+  }
+  if (
     lower.includes("rate limit") ||
     lower.includes("too many requests") ||
     lower.includes("429")
