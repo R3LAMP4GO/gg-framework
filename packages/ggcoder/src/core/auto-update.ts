@@ -80,7 +80,7 @@ function isLinkedLocalRepo(): string | null {
   try {
     const scriptPath = (process.argv[1] ?? "").replace(/\\/g, "/");
     // The linked path looks like: /Users/.../ggcoder/packages/ggcoder/dist/cli.js
-    const match = scriptPath.match(/^(.+\/ggcoder)\/packages\/ggcoder\/dist\/cli\.js$/);
+    const match = scriptPath.match(/^(.+\/(?:ggcoder|gg-framework))\/packages\/ggcoder\/dist\/cli\.js$/);
     if (!match) return null;
     const repoRoot = match[1];
     // Verify it's actually a git repo with origin pointing at Ken's repo

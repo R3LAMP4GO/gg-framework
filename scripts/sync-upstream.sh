@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─── ggcoder upstream sync ────────────────────────────────────
-# Fetches Ken's origin/main, merges into local fork, and rebuilds.
+# Fetches Ken's upstream/main, merges into local fork, and rebuilds.
 # Designed to run via launchd or manually. Safe — aborts on conflicts.
 #
 # Usage:
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REPO_DIR="/Users/imorgado/Projects/Projects/ggcoder"
+REPO_DIR="/Users/imorgado/Projects/gg-framework"
 STATE_FILE="$HOME/.gg/sync-state.json"
 LOG_FILE="$HOME/.gg/sync.log"
 COOLDOWN_SECS=3600  # 1 hour between checks
@@ -54,7 +54,7 @@ if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; th
 fi
 
 # ── Fetch upstream ────────────────────────────────────────────
-if ! git fetch origin --quiet 2>/dev/null; then
+if ! git fetch upstream --quiet 2>/dev/null; then
   log "ERROR: Failed to fetch origin (network issue?)"
   # Record the attempt so we don't spam
   mkdir -p "$(dirname "$STATE_FILE")"
@@ -73,9 +73,9 @@ fi
 
 # ── Check if there are new commits ───────────────────────────
 LOCAL_HEAD=$(git rev-parse HEAD)
-REMOTE_HEAD=$(git rev-parse origin/main)
+REMOTE_HEAD=$(git rev-parse upstream/main)
 
-if [[ "$LOCAL_HEAD" == "$REMOTE_HEAD" ]] || git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+if [[ "$LOCAL_HEAD" == "$REMOTE_HEAD" ]] || git merge-base --is-ancestor upstream/main HEAD 2>/dev/null; then
   log "Already up to date (local: ${LOCAL_HEAD:0:8}, origin: ${REMOTE_HEAD:0:8})"
   mkdir -p "$(dirname "$STATE_FILE")"
   python3 -c "
@@ -95,7 +95,7 @@ fi
 log "New commits found: local=${LOCAL_HEAD:0:8} origin=${REMOTE_HEAD:0:8}"
 
 # ── Attempt merge ─────────────────────────────────────────────
-if ! git merge origin/main --no-edit 2>>"$LOG_FILE"; then
+if ! git merge upstream/main --no-edit 2>>"$LOG_FILE"; then
   log "ERROR: Merge conflict! Aborting merge."
   git merge --abort 2>/dev/null || true
   notify "⚠️ Upstream merge has conflicts — manual resolution needed"
