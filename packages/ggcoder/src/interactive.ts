@@ -21,6 +21,8 @@ import {
 } from "./utils/format.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { ensureAppDirs } from "./config.js";
+import { shouldCompact, compact } from "./core/compaction/compactor.js";
+import { getContextWindow } from "./core/model-registry.js";
 
 export async function runInteractive(config: CliConfig): Promise<void> {
   const { provider, model, cwd } = config;
@@ -68,6 +70,24 @@ export async function runInteractive(config: CliConfig): Promise<void> {
   } else {
     messages.push({ role: "system", content: systemPrompt });
     session = await createSession(cwd, provider, model);
+  }
+
+  // Auto-compact on load if the restored session exceeds the context window.
+  // Without this, huge sessions (1M+ tokens) get loaded into memory and OOM.
+  if (messages.length > 1) {
+    const contextWindow = getContextWindow(model);
+    if (shouldCompact(messages, contextWindow, 0.8)) {
+      stdout.write("Compacting restored session...\n");
+      const creds = await authStorage.resolveCredentials(provider);
+      const compacted = await compact(messages, {
+        provider,
+        model,
+        apiKey: creds.accessToken,
+        contextWindow,
+      });
+      messages.length = 0;
+      messages.push(...compacted.messages);
+    }
   }
 
   // Welcome banner

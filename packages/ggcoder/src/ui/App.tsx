@@ -196,6 +196,11 @@ interface ServerToolDoneItem {
   id: string;
 }
 
+interface TombstoneItem {
+  kind: "tombstone";
+  id: string;
+}
+
 export type CompletedItem =
   | UserItem
   | TaskItem
@@ -210,7 +215,29 @@ export type CompletedItem =
   | CompactedItem
   | DurationItem
   | BannerItem
-  | SubAgentGroupItem;
+  | SubAgentGroupItem
+  | TombstoneItem;
+
+/**
+ * Cap memory by replacing old items with tiny tombstones. Ink's <Static>
+ * tracks rendered items by array length — the array must never shrink, but
+ * we can swap out heavy objects for lightweight `{ kind: "tombstone", id }`
+ * entries so GC can reclaim the original data.
+ */
+const MAX_LIVE_HISTORY = 200;
+function compactHistory(items: CompletedItem[]): CompletedItem[] {
+  if (items.length <= MAX_LIVE_HISTORY) return items;
+  const cutoff = items.length - MAX_LIVE_HISTORY;
+  const compacted = new Array<CompletedItem>(items.length);
+  for (let i = 0; i < cutoff; i++) {
+    const it = items[i];
+    compacted[i] = it.kind === "tombstone" ? it : { kind: "tombstone", id: it.id };
+  }
+  for (let i = cutoff; i < items.length; i++) {
+    compacted[i] = items[i];
+  }
+  return compacted;
+}
 
 // flushOnTurnText, flushOnTurnEnd are imported from ./live-item-flush.ts
 
@@ -390,7 +417,7 @@ export function App(props: AppProps) {
   useEffect(() => {
     if (isRestoredSession && !restoredRef.current) {
       restoredRef.current = true;
-      setHistory((prev) => [...prev, ...trimFlushedItems(props.initialHistory!)]);
+      setHistory((prev) => compactHistory([...prev, ...trimFlushedItems(props.initialHistory!)]));
     }
   }, [isRestoredSession, props.initialHistory]);
   // Items from the current/last turn — rendered in the live area so they stay visible
@@ -669,7 +696,7 @@ export function App(props: AppProps) {
         setLiveItems((prev) => {
           const flushed = flushOnTurnText(prev);
           if (flushed.length > 0) {
-            setHistory((h) => [...h, ...trimFlushedItems(flushed)]);
+            setHistory((h) => compactHistory([...h, ...trimFlushedItems(flushed)]));
           }
           return [{ kind: "assistant", text, thinking, thinkingMs, id: getId() }];
         });
@@ -872,7 +899,7 @@ export function App(props: AppProps) {
           setLiveItems((prev) => {
             const { flushed, remaining } = flushOnTurnEnd(prev, stopReason);
             if (flushed.length > 0) {
-              setHistory((h) => [...h, ...trimFlushedItems(flushed)]);
+              setHistory((h) => compactHistory([...h, ...trimFlushedItems(flushed)]));
             }
             return remaining;
           });
@@ -939,7 +966,7 @@ export function App(props: AppProps) {
     if (pendingFlushRef.current.length > 0) {
       const items = pendingFlushRef.current;
       pendingFlushRef.current = [];
-      setHistory((h) => [...h, ...trimFlushedItems(items)]);
+      setHistory((h) => compactHistory([...h, ...trimFlushedItems(items)]));
     }
   });
 
@@ -1038,7 +1065,7 @@ export function App(props: AppProps) {
           // Move live items into history before starting
           setLiveItems((prev) => {
             if (prev.length > 0) {
-              setHistory((h) => [...h, ...trimFlushedItems(prev)]);
+              setHistory((h) => compactHistory([...h, ...trimFlushedItems(prev)]));
             }
             return [];
           });
@@ -1084,7 +1111,7 @@ export function App(props: AppProps) {
       // Move any remaining live items into history (Static) before starting new turn
       setLiveItems((prev) => {
         if (prev.length > 0) {
-          setHistory((h) => [...h, ...trimFlushedItems(prev)]);
+          setHistory((h) => compactHistory([...h, ...trimFlushedItems(prev)]));
         }
         return [];
       });
@@ -1284,6 +1311,8 @@ export function App(props: AppProps) {
 
   const renderItem = (item: CompletedItem) => {
     switch (item.kind) {
+      case "tombstone":
+        return null;
       case "banner":
         return (
           <Banner
