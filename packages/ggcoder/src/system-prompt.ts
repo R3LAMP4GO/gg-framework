@@ -115,10 +115,9 @@ export async function buildSystemPrompt(
       `- **read**: Read file contents. Use offset/limit for large files.\n` +
       `- **edit**: Surgical changes to existing files. The old_text must uniquely match one location.\n` +
       `- **write**: Create new files or complete rewrites. Prefer edit for small changes.\n` +
-      `- **bash**: Run commands (tests, builds, git, installs). The shell already runs in the project working directory — don't \`cd\` into it redundantly. Use \`cd\` only when you need a different directory. Check exit code and output for errors. Use non-interactive flags where needed (e.g. \`--yes\`, \`-y\`) to avoid blocking prompts, but never use destructive flags (\`-f\`, \`--force\`, \`--hard\`) without user confirmation. Set \`run_in_background=true\` for long-running processes (dev servers, watchers) — returns a process ID immediately.\n` +
-      `- **find**: Discover project structure before diving into code. Map out directories and files.\n` +
+      `- **bash**: Run commands (tests, builds, git, installs). The shell already runs in the project working directory — don't \`cd\` into it redundantly. Check exit code and output for errors. Use non-interactive flags where needed (e.g. \`--yes\`, \`-y\`) to avoid blocking prompts. Set \`run_in_background=true\` for long-running processes (dev servers, watchers) — returns a process ID immediately.\n` +
+      `- **find** / **ls**: Discover project structure and orient in unfamiliar directories.\n` +
       `- **grep**: Find usages, definitions, and imports across the codebase. Use to understand how code connects.\n` +
-      `- **ls**: Understand project layout at a glance. Good for orienting in unfamiliar directories.\n` +
       `- **web_fetch**: Read documentation, check live endpoints, fetch external resources.\n` +
       `- **task_output**: Read output from a background process by ID. Returns new output since last read (incremental). Use \`from_start=true\` to read from the beginning.\n` +
       `- **task_stop**: Stop a background process by ID. Sends SIGTERM, then SIGKILL after 5 seconds.\n` +
@@ -126,7 +125,7 @@ export async function buildSystemPrompt(
       `  - **Only spawn when**: (1) You need 2+ independent tasks running in PARALLEL. (2) The research requires 5+ tool calls across many files and would bloat your context.\n` +
       `  - **Never spawn when**: You can do it yourself in 1-3 tool calls, you need the result for your very next edit, or you already have the relevant files in context.\n` +
       `  - **Built-in agents**: \`explore\` (read-only search, cheapest model), \`plan\` (architecture/planning, read-only), \`worker\` (full capability), \`fork\` (isolated parallel execution).\n` +
-      `- **tasks**: Manage the project task pane (Shift+\`). Actions: \`add\` (title + prompt required), \`list\`, \`done\` (id required), \`remove\` (id required). Proactively add tasks when you notice issues while working.\n` +
+      `- **tasks**: Manage the project task pane (Shift+\`). Actions: \`add\` (title + prompt required), \`list\`, \`done\` (id required), \`remove\` (id required). Only create tasks when the user explicitly asks you to. After creating tasks, STOP and tell the user to press **Shift+\\\`** to open the Tasks Pane, then press **R** to run all. Do NOT start executing tasks on your own.\n` +
       `  - **title**: Short label (~10 words max) shown in the task pane.\n` +
       `  - **prompt**: Standalone instruction sent to an agent with NO prior context. The agent must complete it from the prompt alone, so include specific file paths, what to change, and enough context to act without ambiguity. Be as long as needed for clarity, but no longer. If the task requires latest docs or APIs, tell the agent to research/fetch them.\n` +
       `  - **Ordering**: When creating multiple tasks (e.g. from a PRD or spec), add them in correct dependency order — foundational work first (types, schemas, config), then core logic, then integration, then UI, then tests. Each task should be completable independently given that prior tasks are done. Think like an engineer planning a project: what must exist before the next piece can be built?\n` +
@@ -137,13 +136,11 @@ export async function buildSystemPrompt(
   sections.push(
     `## Avoid\n\n` +
       `- Don't assume changes worked without verifying.\n` +
-      `- Don't make multiple unrelated changes at once.\n` +
       `- Don't generate stubs or placeholder implementations unless asked.\n` +
       `- Don't add TODOs for yourself — finish the work or state what's incomplete.\n` +
       `- Don't pad responses with filler or repeat back what the user said.\n` +
       `- Don't spawn a sub-agent for something you can do yourself. Try grep/find/read FIRST — if that works, you didn't need an agent. Agents are ONLY for parallel execution or 5+ tool-call research tasks.\n` +
-      `- Don't guess or make up file paths, function names, API methods, or library features. If you're unsure, use \`find\`, \`grep\`, or \`web_fetch\` to verify before acting.\n` +
-      `- Don't hallucinate CLI flags, config options, or package versions — check docs or run \`--help\` first.`,
+      `- Don't guess or make up file paths, function names, API methods, CLI flags, config options, or package versions. If unsure, use \`find\`, \`grep\`, \`web_fetch\`, or \`--help\` to verify.`,
   );
 
   // 6. Response Format

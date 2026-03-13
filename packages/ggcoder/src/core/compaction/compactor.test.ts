@@ -34,7 +34,7 @@ function makeToolResultMessage(toolCallId = "t1", content = "file contents"): Me
   };
 }
 
-function makeAssistantWithThinking(text: string, thinking: string): Message {
+function _makeAssistantWithThinking(text: string, thinking: string): Message {
   return {
     role: "assistant",
     content: [

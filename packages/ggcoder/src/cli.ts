@@ -22,6 +22,8 @@ import { ensureAppDirs, getAppPaths } from "./config.js";
 import { initLogger, log, closeLogger } from "./core/logger.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { createTools } from "./tools/index.js";
+import { shouldCompact, compact } from "./core/compaction/compactor.js";
+import { getContextWindow } from "./core/model-registry.js";
 import { MCPClientManager, getMCPServers } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
 import { BUILTIN_AGENTS } from "./core/builtin-agents.js";
@@ -384,6 +386,27 @@ async function runInkTUI(opts: {
             path: existingPath,
             messageCount: String(loadedMessages.length),
           });
+
+          // Auto-compact on load if the restored session exceeds the context window.
+          // Without this, huge sessions (1M+ tokens) get loaded into memory and OOM.
+          const contextWindow = getContextWindow(model);
+          if (shouldCompact(messages, contextWindow, 0.8)) {
+            log("INFO", "session", `Restored session exceeds context — auto-compacting`);
+            const compacted = await compact(messages, {
+              provider,
+              model,
+              apiKey: creds.accessToken,
+              contextWindow,
+            });
+            // Replace messages array contents with compacted messages
+            messages.length = 0;
+            messages.push(...compacted.messages);
+            log("INFO", "session", `Auto-compaction complete`, {
+              before: String(compacted.result.originalCount),
+              after: String(compacted.result.newCount),
+            });
+          }
+
           initialHistory = messagesToHistoryItems(loadedMessages);
           initialHistory.push({
             kind: "info",

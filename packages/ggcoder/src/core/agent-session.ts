@@ -393,13 +393,34 @@ export class AgentSession {
     const systemMsg = this.messages[0]; // Already built
     this.messages = [systemMsg, ...loadedMessages];
 
+    // Auto-compact on load if the restored session exceeds the context window.
+    // Without this, huge sessions (1M+ tokens) get loaded into memory and OOM.
+    const contextWindow = getContextWindow(this.model);
+    if (shouldCompact(this.messages, contextWindow, 0.8)) {
+      log("INFO", "session", `Restored session exceeds context — auto-compacting`);
+      const creds = await this.authStorage.resolveCredentials(this.provider);
+      const compacted = await compact(this.messages, {
+        provider: this.provider,
+        model: this.model,
+        apiKey: creds.accessToken,
+        contextWindow,
+        signal: this.opts.signal,
+      });
+      this.messages = compacted.messages;
+      log("INFO", "session", `Auto-compaction complete`, {
+        before: String(compacted.result.originalCount),
+        after: String(compacted.result.newCount),
+      });
+    }
+
     // Create new session file for continuation
     const session = await this.sessionManager.create(this.cwd, this.provider, this.model);
     this.sessionId = session.id;
     this.sessionPath = session.path;
 
-    // Re-persist loaded messages
-    for (const msg of loadedMessages) {
+    // Re-persist (compacted) messages — skip system, it's rebuilt on load
+    for (const msg of this.messages) {
+      if (msg.role === "system") continue;
       await this.persistMessage(msg);
     }
     this.lastPersistedIndex = this.messages.length;

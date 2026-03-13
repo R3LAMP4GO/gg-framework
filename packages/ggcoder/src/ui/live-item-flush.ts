@@ -77,6 +77,23 @@ export function trimFlushedItems<T extends FlushableItem>(items: T[]): T[] {
       changed = true;
     }
 
+    // Trim tool group results
+    if (rec.kind === "tool_group" && Array.isArray(rec.tools)) {
+      const tools = rec.tools as { result?: string }[];
+      let toolsChanged = false;
+      const trimmedTools = tools.map((t) => {
+        if (typeof t.result === "string" && t.result.length > MAX_RESULT_CHARS_IN_HISTORY) {
+          toolsChanged = true;
+          return { ...t, result: truncateResult(t.result) };
+        }
+        return t;
+      });
+      if (toolsChanged) {
+        patches.tools = trimmedTools;
+        changed = true;
+      }
+    }
+
     // Trim sub-agent group results
     if (rec.kind === "subagent_group" && Array.isArray(rec.agents)) {
       const agents = rec.agents as { result?: string }[];
@@ -126,7 +143,14 @@ export function flushOnTurnEnd<T extends FlushableItem>(
     return { flushed: [], remaining: liveItems };
   }
 
-  const hasPendingToolStart = liveItems.some((item) => item.kind === "tool_start");
+  const hasPendingToolStart = liveItems.some(
+    (item) =>
+      item.kind === "tool_start" ||
+      (item.kind === "tool_group" &&
+        ((item as unknown as { tools: { status: string }[] }).tools ?? []).some(
+          (t) => t.status === "running",
+        )),
+  );
 
   if (hasPendingToolStart || liveItems.length === 0) {
     return { flushed: [], remaining: liveItems };

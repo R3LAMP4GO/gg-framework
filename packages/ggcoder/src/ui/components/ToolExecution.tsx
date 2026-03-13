@@ -4,7 +4,14 @@ import { useTheme } from "../theme/theme.js";
 import { Spinner } from "./Spinner.js";
 import { highlightCode, langFromPath } from "../utils/highlight.js";
 
-const MAX_OUTPUT_LINES = 4;
+const MAX_OUTPUT_LINES = 4; // max lines shown per tool result
+
+/** Truncate a line so it fits within ~1 terminal row. */
+function truncateLine(line: string, reservedChars = 6): string {
+  const cols = process.stdout.columns || 80;
+  const max = cols - reservedChars;
+  return line.length > max ? line.slice(0, max) + "…" : line;
+}
 
 interface ToolRunningProps {
   status: "running";
@@ -22,6 +29,9 @@ interface ToolDoneProps {
 
 type ToolExecutionProps = ToolRunningProps | ToolDoneProps;
 
+/** Tools that use compact one-line summaries instead of showing output. */
+const COMPACT_TOOLS = new Set(["read", "grep", "find", "ls"]);
+
 export function ToolExecution(props: ToolExecutionProps) {
   const theme = useTheme();
 
@@ -36,6 +46,15 @@ export function ToolExecution(props: ToolExecutionProps) {
   }, [props.status]);
 
   if (props.status === "running") {
+    // Compact tools get a summary label while running
+    if (COMPACT_TOOLS.has(props.name)) {
+      const summary = getCompactRunningLabel(props.name, props.args);
+      return (
+        <Box marginTop={1}>
+          <Spinner label={`${summary} (ctrl+o to expand)`} />
+        </Box>
+      );
+    }
     const { label, detail } = getToolHeaderParts(props.name, props.args);
     return (
       <Box marginTop={1}>
@@ -45,6 +64,24 @@ export function ToolExecution(props: ToolExecutionProps) {
   }
 
   const { name, args, result, isError } = props;
+
+  // Compact tools — one-line summary, no output content
+  if (COMPACT_TOOLS.has(name) && !isError) {
+    const summary = getCompactDoneLabel(name, args, result);
+    return (
+      <Box marginTop={1} flexShrink={1}>
+        <Text>
+          <Text color={theme.primary} dimColor={isFresh}>
+            {"⏺ "}
+          </Text>
+          <Text bold color={theme.toolName} dimColor={isFresh}>
+            {summary}
+          </Text>
+        </Text>
+      </Box>
+    );
+  }
+
   const isDiff = name === "edit" && !isError && result.includes("---");
 
   const { label, detail } = getToolHeaderParts(name, args);
@@ -125,6 +162,49 @@ export function ToolExecution(props: ToolExecutionProps) {
       </Box>
     </Box>
   );
+}
+
+// ── Compact tool labels ─────────────────────────────────────
+
+function getCompactRunningLabel(name: string, _args: Record<string, unknown>): string {
+  switch (name) {
+    case "grep":
+      return "Searching…";
+    case "read":
+      return "Reading…";
+    case "find":
+      return "Finding files…";
+    case "ls":
+      return "Listing…";
+    default:
+      return `${name}…`;
+  }
+}
+
+function getCompactDoneLabel(name: string, args: Record<string, unknown>, result: string): string {
+  switch (name) {
+    case "grep": {
+      const lines = result.split("\n").filter((l) => l.length > 0);
+      // Filter out the summary line ("N match(es) found" or "[Truncated at N matches]")
+      const matchCount = lines.filter((l) => !l.match(/^\d+ match|^\[Truncated/)).length;
+      return `Searched for 1 pattern${matchCount > 0 ? ` (${matchCount} match${matchCount !== 1 ? "es" : ""})` : ""}`;
+    }
+    case "read": {
+      const filePath = String(args.file_path ?? "");
+      const shortPath = shortenPath(filePath);
+      return `Read ${shortPath}`;
+    }
+    case "find": {
+      const lines = result.split("\n").filter((l) => l.length > 0);
+      return `Found ${lines.length} file${lines.length !== 1 ? "s" : ""}`;
+    }
+    case "ls": {
+      const lines = result.split("\n").filter((l) => l.length > 0);
+      return `Listed ${lines.length} item${lines.length !== 1 ? "s" : ""}`;
+    }
+    default:
+      return name;
+  }
 }
 
 // ── Header formatting ──────────────────────────────────────
@@ -371,7 +451,7 @@ function buildResultBody(name: string, result: string, isError: boolean): BodyCo
     return {
       lines: display.map((l, i) => (
         <Text key={i} color="#f87171">
-          {l}
+          {truncateLine(l)}
         </Text>
       )),
       totalLines: lines.length,
@@ -390,7 +470,7 @@ function buildResultBody(name: string, result: string, isError: boolean): BodyCo
       return {
         lines: display.map((l, i) => (
           <Text key={i} color={exitCode !== "0" ? "#fbbf24" : "#9ca3af"}>
-            {l}
+            {truncateLine(l)}
           </Text>
         )),
         totalLines: outputLines.length,
@@ -434,7 +514,7 @@ function buildResultBody(name: string, result: string, isError: boolean): BodyCo
       return {
         lines: display.map((l, i) => (
           <Text key={i} color="#9ca3af">
-            {l}
+            {truncateLine(l)}
           </Text>
         )),
         totalLines: lines.length,
@@ -541,7 +621,10 @@ const GrepLine = memo(function GrepLine({ line }: { line: string }) {
 
   const file = line.slice(0, firstColon);
   const lineNo = line.slice(firstColon + 1, secondColon);
-  const content = line.slice(secondColon + 1);
+  const rawContent = line.slice(secondColon + 1);
+  // Truncate so the full line fits within ~4 terminal rows
+  const prefixLen = file.length + lineNo.length + 2; // 2 = colons
+  const content = truncateLine(rawContent, prefixLen + 6);
 
   return (
     <Text>
