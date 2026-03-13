@@ -28,7 +28,6 @@ import { MCPClientManager, getMCPServers } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
 import { BUILTIN_AGENTS } from "./core/builtin-agents.js";
 import { discoverSkills } from "./core/skills.js";
-import { createPlanModeManager } from "./core/plan-mode.js";
 import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./core/oauth/types.js";
@@ -329,16 +328,12 @@ async function runInkTUI(opts: {
     projectDir: cwd,
   });
 
-  // Create plan mode manager
-  const planModeManager = createPlanModeManager(cwd);
-
-  // Build system prompt & tools (with sub-agent + plan mode support)
+  // Build system prompt & tools (with sub-agent support)
   const systemPrompt = opts.systemPrompt ?? (await buildSystemPrompt(cwd));
   const { tools, processManager } = createTools(cwd, {
     agents,
     provider,
     model,
-    planModeManager,
     skills,
   });
 
@@ -447,7 +442,6 @@ async function runInkTUI(opts: {
     sessionsDir: paths.sessionsDir,
     sessionPath,
     processManager,
-    planModeManager,
     agents,
     settingsFile: paths.settingsFile,
     mcpManager,

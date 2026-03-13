@@ -7,23 +7,6 @@
 
 import { log } from "./logger.js";
 
-// ── Plan mode events ──────────────────────────────────────
-
-export interface PlanModeEvent {
-  event: "plan_enter" | "plan_exit" | "plan_approve" | "plan_reject" | "plan_cancel";
-  entryMethod: "tool" | "hotkey" | "command";
-  planLengthChars?: number;
-  outcome?: "approved" | "rejected" | "cancelled";
-  interviewPhaseEnabled: boolean;
-  questionCount?: number;
-  interviewQuestionsAsked?: number;
-  durationMs?: number;
-}
-
-export function trackPlanMode(data: PlanModeEvent): void {
-  log("INFO", "telemetry:plan", data.event, data as unknown as Record<string, unknown>);
-}
-
 // ── Question/elicitation events ───────────────────────────
 
 export interface QuestionEvent {

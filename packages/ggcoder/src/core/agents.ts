@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export type PermissionMode = "default" | "acceptEdits" | "dontAsk" | "bypassPermissions" | "plan";
+export type PermissionMode = "default" | "acceptEdits" | "dontAsk" | "bypassPermissions";
 
 export interface AgentDefinition {
   name: string;
@@ -140,7 +140,6 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
             "acceptEdits",
             "dontAsk",
             "bypassPermissions",
-            "plan",
           ];
           if (validModes.includes(value as PermissionMode)) {
             permissionMode = value as PermissionMode;

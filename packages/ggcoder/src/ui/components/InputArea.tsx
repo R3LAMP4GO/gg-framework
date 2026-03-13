@@ -30,7 +30,6 @@ interface InputAreaProps {
   isActive?: boolean;
   onDownAtEnd?: () => void;
   onShiftTab?: () => void;
-  onTogglePlan?: () => void;
   onToggleTasks?: () => void;
   cwd: string;
   commands?: SlashCommandInfo[];
@@ -90,7 +89,6 @@ export function InputArea({
   isActive = true,
   onDownAtEnd,
   onShiftTab,
-  onTogglePlan,
   onToggleTasks,
   cwd,
   commands = [],
@@ -286,18 +284,6 @@ export function InputArea({
           setSelectedImageIndex(null);
           setPasteText("");
         }
-        return;
-      }
-
-      // Option+Tab — toggle plan mode
-      if (key.meta && key.tab) {
-        onTogglePlan?.();
-        return;
-      }
-
-      // Ctrl+P — toggle plan mode (alternate binding)
-      if (key.ctrl && input === "p") {
-        onTogglePlan?.();
         return;
       }
 

@@ -72,9 +72,6 @@ const TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
       "tasks",
       "task_output",
       "task_stop",
-      "ask_user_question",
-      "enter_plan_mode",
-      "exit_plan_mode",
     ],
   },
 ];

@@ -4,7 +4,6 @@ import chalk from "chalk";
 import type { Message, Provider, ThinkingLevel } from "@kenkaiiii/gg-ai";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
-import type { PlanModeManager } from "../core/plan-mode.js";
 import type { AgentDefinition } from "../core/agents.js";
 import type { MCPClientManager } from "../core/mcp/index.js";
 import type { AuthStorage } from "../core/auth-storage.js";
@@ -35,7 +34,6 @@ export interface RenderAppConfig {
   sessionsDir?: string;
   sessionPath?: string;
   processManager?: ProcessManager;
-  planModeManager?: PlanModeManager;
   agents?: AgentDefinition[];
   settingsFile?: string;
   mcpManager?: MCPClientManager;
@@ -76,7 +74,6 @@ export async function renderApp(config: RenderAppConfig): Promise<void> {
         sessionsDir: config.sessionsDir,
         sessionPath: config.sessionPath,
         processManager: config.processManager,
-        planModeManager: config.planModeManager,
         agents: config.agents,
         settingsFile: config.settingsFile,
         mcpManager: config.mcpManager,

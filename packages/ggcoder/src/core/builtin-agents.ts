@@ -195,7 +195,6 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     disallowedTools: ["write", "edit", "subagent"],
     model: "inherit", // Inherits from parent
     maxTurns: 15,
-    permissionMode: "plan",
     systemPrompt: PLAN_SYSTEM_PROMPT,
     source: "builtin",
   },

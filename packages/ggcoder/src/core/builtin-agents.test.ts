@@ -70,10 +70,6 @@ describe("BUILTIN_AGENTS", () => {
       expect(plan.tools).toEqual(["read", "grep", "find", "ls", "bash"]);
     });
 
-    it("has permissionMode plan", () => {
-      expect(plan.permissionMode).toBe("plan");
-    });
-
     it("system prompt contains Critical Files output section", () => {
       expect(plan.systemPrompt).toContain("Critical Files for Implementation");
     });

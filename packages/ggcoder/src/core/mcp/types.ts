@@ -15,7 +15,7 @@ export interface MCPServerConfig {
 
 /**
  * Handler for MCP elicitation/create requests.
- * Routes MCP server questions through the UI's QuestionOverlay.
+ * Routes MCP server questions through the UI.
  */
 export type ElicitationHandler = (params: {
   message: string;

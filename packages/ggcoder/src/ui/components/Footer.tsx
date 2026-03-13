@@ -8,7 +8,6 @@ interface FooterProps {
   cwd: string;
   gitBranch?: string | null;
   thinkingEnabled?: boolean;
-  planModeActive?: boolean;
 }
 
 // Model ID → short display name
@@ -80,7 +79,6 @@ export function Footer({
   cwd,
   gitBranch,
   thinkingEnabled,
-  planModeActive,
 }: FooterProps) {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -127,9 +125,7 @@ export function Footer({
 
   // Mode indicators: thinking toggle
   const thinkingText = thinkingEnabled ? "Thinking on" : "Thinking off";
-  const planText = planModeActive ? " · 📋 Plan" : "";
-  const modeText = thinkingText + planText;
-  const modeLen = modeText.length + 3; // " │ " separator
+  const modeLen = thinkingText.length + 3; // " │ " separator
 
   // Truncate path if footer would overflow
   const rightLen =
@@ -175,7 +171,6 @@ export function Footer({
         </Text>
         {sep}
         <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
-        {planModeActive && <Text color={theme.warning}>{" · 📋 Plan"}</Text>}
       </Box>
     </Box>
   );

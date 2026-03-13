@@ -106,12 +106,12 @@ Implement API endpoints.`;
     const raw = `---
 name: planner
 description: Plan agent
-permissionMode: plan
+permissionMode: bypassPermissions
 ---
 Plan things.`;
 
     const agent = parseAgentFile(raw, "global");
-    expect(agent.permissionMode).toBe("plan");
+    expect(agent.permissionMode).toBe("bypassPermissions");
   });
 
   it("parses permissionMode with hyphenated key", () => {
@@ -139,7 +139,7 @@ prompt`;
   });
 
   it("accepts all valid permissionMode values", () => {
-    const modes = ["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan"] as const;
+    const modes = ["default", "acceptEdits", "dontAsk", "bypassPermissions"] as const;
     for (const mode of modes) {
       const raw = `---
 name: test-${mode}

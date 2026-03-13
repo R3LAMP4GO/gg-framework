@@ -10,7 +10,6 @@ export interface SlashCommandContext {
   setSetting: (key: string, value: unknown) => Promise<void>;
   getModelList: () => string;
   quit: () => void;
-  togglePlanMode?: (args?: string) => string;
   getAgents?: () => {
     name: string;
     description: string;
@@ -270,11 +269,11 @@ export function createBuiltinCommands(): SlashCommand[] {
     {
       name: "plan",
       aliases: [],
-      description: "Toggle plan mode (read-only planning with approval)",
+      description: "Ask the agent to create a plan before implementing",
       usage: "/plan [task description]",
-      execute(args, ctx) {
-        if (!ctx.togglePlanMode) return "Plan mode is not available in this session.";
-        return ctx.togglePlanMode(args || undefined);
+      execute(args) {
+        if (!args) return "Usage: /plan <task description>";
+        return `Creating a plan for: ${args}`;
       },
     },
     {

@@ -51,16 +51,6 @@ import type { MCPClientManager } from "../core/mcp/index.js";
 import { getMCPServers } from "../core/mcp/index.js";
 import type { AuthStorage } from "../core/auth-storage.js";
 import { flushOnTurnText, flushOnTurnEnd, trimFlushedItems } from "./live-item-flush.js";
-import {
-  createPlanModeManager,
-  type PlanModeState,
-  type PlanModeManager,
-} from "../core/plan-mode.js";
-import { PlanOverlay } from "./components/PlanOverlay.js";
-import { QuestionOverlay } from "./components/QuestionOverlay.js";
-import { setQuestionHandler } from "../tools/ask-user-question.js";
-import type { Question, QuestionResult, ElicitationRequest } from "../tools/ask-user-question.js";
-import { trackQuestion } from "../core/telemetry.js";
 import { copyToClipboard } from "../utils/clipboard.js";
 
 // ── Provider Error Hints ──────────────────────────────────
@@ -419,7 +409,6 @@ export interface AppProps {
   sessionsDir?: string;
   sessionPath?: string;
   processManager?: ProcessManager;
-  planModeManager?: PlanModeManager;
   agents?: AgentDefinition[];
   settingsFile?: string;
   mcpManager?: MCPClientManager;
@@ -477,46 +466,6 @@ export function App(props: AppProps) {
   const [currentProvider, setCurrentProvider] = useState(props.provider);
   const [currentTools, setCurrentTools] = useState(props.tools);
   const [thinkingEnabled, setThinkingEnabled] = useState(!!props.thinking);
-
-  // ── Plan mode ──────────────────────────────────────────
-  // Use the shared planModeManager from CLI (wired into tools) when provided,
-  // so tool-level plan mode guards and UI state stay in sync.
-  const planManagerRef = useRef<PlanModeManager>(
-    props.planModeManager ?? createPlanModeManager(props.cwd),
-  );
-  const [planModeState, setPlanModeState] = useState<PlanModeState>("idle");
-  const [showPlanReview, setShowPlanReview] = useState(false);
-
-  // Subscribe to plan mode state changes
-  useEffect(() => {
-    const unsub = planManagerRef.current.onChange((state) => {
-      setPlanModeState(state);
-      if (state === "reviewing") {
-        setShowPlanReview(true);
-      } else {
-        setShowPlanReview(false);
-      }
-    });
-    return unsub;
-  }, []);
-
-  // ── AskUserQuestion tool overlay ──────────────────────
-  const [pendingQuestions, setPendingQuestions] = useState<{
-    questions: Question[];
-    elicitation?: ElicitationRequest;
-    resolve: (result: QuestionResult) => void;
-  } | null>(null);
-
-  // Register the question handler so the ask_user_question tool can pause
-  // and wait for user answers via the UI overlay
-  useEffect(() => {
-    setQuestionHandler((questions, elicitation) => {
-      return new Promise<QuestionResult>((resolve) => {
-        setPendingQuestions({ questions, elicitation, resolve });
-      });
-    });
-    return () => setQuestionHandler(null);
-  }, []);
 
   const messagesRef = useRef<Message[]>(props.messages);
   const nextIdRef = useRef(0);
@@ -1161,40 +1110,36 @@ export function App(props: AppProps) {
         return;
       }
 
-      // Handle /plan — toggle plan mode or enter plan mode with args
-      if (trimmed === "/plan" || trimmed.startsWith("/plan ")) {
-        const planArgs = trimmed === "/plan" ? "" : trimmed.slice(6).trim();
-        const pm = planManagerRef.current;
-        if (pm.state === "idle") {
-          pm.enter(planArgs || "User toggled plan mode");
-          setLiveItems((prev) => [
-            ...prev,
-            { kind: "info", text: `📋 Plan mode on — read-only exploration`, id: getId() },
-          ]);
-          if (planArgs) {
-            // Send the plan args as a user message to kick off planning
-            setLiveItems((prev) => {
-              if (prev.length > 0) {
-                setHistory((h) => compactHistory([...h, ...trimFlushedItems(prev)]));
-              }
-              return [];
-            });
-            const userItem: UserItem = { kind: "user", text: trimmed, id: getId() };
-            setLastUserMessage(trimmed);
-            setDoneStatus(null);
-            setLiveItems([userItem]);
-            try {
-              await agentLoop.run(planArgs);
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              log("ERROR", "error", msg);
-              setLiveItems((prev) => [...prev, { kind: "error", message: msg, id: getId() }]);
+      // Handle /plan — send as a prompt asking for a plan
+      if (trimmed.startsWith("/plan ")) {
+        const planArgs = trimmed.slice(6).trim();
+        if (planArgs) {
+          // Send as a prompt with planning instruction
+          setLiveItems((prev) => {
+            if (prev.length > 0) {
+              setHistory((h) => compactHistory([...h, ...trimFlushedItems(prev)]));
             }
+            return [];
+          });
+          const userItem: UserItem = { kind: "user", text: trimmed, id: getId() };
+          setLastUserMessage(trimmed);
+          setDoneStatus(null);
+          setLiveItems([userItem]);
+          try {
+            await agentLoop.run(
+              `Create a plan for the following task before implementing it:\n\n${planArgs}`,
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log("ERROR", "error", msg);
+            setLiveItems((prev) => [...prev, { kind: "error", message: msg, id: getId() }]);
           }
-        } else {
-          pm.cancel();
-          setLiveItems((prev) => [...prev, { kind: "info", text: `Plan mode off`, id: getId() }]);
+          return;
         }
+        setLiveItems((prev) => [
+          ...prev,
+          { kind: "info", text: "Usage: /plan <task description>", id: getId() },
+        ]);
         return;
       }
 
@@ -1628,21 +1573,6 @@ export function App(props: AppProps) {
     }
   }, [props.settingsFile, thinkingEnabled]);
 
-  // Ctrl+P toggles plan mode on/off (separate from thinking)
-  const handleTogglePlan = useCallback(() => {
-    const pm = planManagerRef.current;
-    if (pm.state === "idle") {
-      pm.enter("User toggled plan mode via Ctrl+P");
-      setLiveItems((items) => [
-        ...items,
-        { kind: "info", text: "📋 Plan mode on — read-only exploration", id: getId() },
-      ]);
-    } else {
-      pm.cancel();
-      setLiveItems((items) => [...items, { kind: "info", text: "Plan mode off", id: getId() }]);
-    }
-  }, []);
-
   const handleModelSelect = useCallback(
     (value: string) => {
       setOverlay(null);
@@ -2069,159 +1999,14 @@ export function App(props: AppProps) {
             )
           )}
 
-          {/* Plan review overlay */}
-          {showPlanReview && planManagerRef.current.planContent && (
-            <PlanOverlay
-              planContent={planManagerRef.current.planContent}
-              planFilePath={planManagerRef.current.planFilePath}
-              onApprove={({ clearContext }) => {
-                const pm = planManagerRef.current;
-                const plan = pm.planContent ?? "";
-                pm.approve();
-                setLiveItems((prev) => [
-                  ...prev,
-                  { kind: "info", text: "✅ Plan approved — executing…", id: getId() },
-                ]);
-                if (clearContext) {
-                  // Compact the conversation first, then resume
-                  void compactConversation(messagesRef.current).then((compacted) => {
-                    messagesRef.current = compacted;
-                    void agentLoop.run(
-                      `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
-                    );
-                  });
-                } else {
-                  // Resume the agent loop to execute the approved plan
-                  void agentLoop.run(
-                    `The user approved the plan. Now execute it step by step.\n\nHere is the approved plan:\n\n${plan}`,
-                  );
-                }
-              }}
-              onReject={(feedback) => {
-                const pm = planManagerRef.current;
-                pm.reject(feedback);
-                setLiveItems((prev) => [
-                  ...prev,
-                  { kind: "info", text: `📝 Plan rejected — revising with feedback`, id: getId() },
-                ]);
-                // Re-run with feedback
-                void agentLoop.run(
-                  `The user rejected the plan with this feedback: ${feedback}\n\nPlease revise the plan.`,
-                );
-              }}
-              onCancel={() => {
-                const pm = planManagerRef.current;
-                pm.cancel();
-                setLiveItems((prev) => [
-                  ...prev,
-                  { kind: "info", text: "Plan cancelled", id: getId() },
-                ]);
-              }}
-              onEdit={async () => {
-                const filePath = planManagerRef.current.planFilePath;
-                if (!filePath) return;
-
-                const editor = process.env.VISUAL || process.env.EDITOR || "vi";
-                const { spawnSync } = await import("node:child_process");
-
-                // Exit Ink's raw mode so the editor gets a clean terminal
-                if (process.stdin.isTTY) {
-                  process.stdin.setRawMode(false);
-                }
-                // Clear screen before handing off to editor
-                stdout?.write("\x1b[?1049h"); // switch to alternate screen buffer
-
-                const result = spawnSync(editor, [filePath], {
-                  stdio: "inherit",
-                  shell: true,
-                });
-
-                // Restore terminal for Ink
-                stdout?.write("\x1b[?1049l"); // switch back from alternate screen buffer
-                if (process.stdin.isTTY) {
-                  process.stdin.setRawMode(true);
-                  process.stdin.resume();
-                }
-
-                if (result.status !== 0) {
-                  log("WARN", "plan-mode", `Editor exited with status ${result.status}`);
-                }
-
-                // Re-read the file after editing
-                const { readFileSync } = await import("node:fs");
-                const updated = readFileSync(filePath, "utf-8");
-                planManagerRef.current.updatePlanContent(updated);
-                log("INFO", "plan-mode", `Plan updated after editor (${updated.length} chars)`);
-              }}
-            />
-          )}
-
-          {/* AskUserQuestion overlay — shown when agent calls ask_user_question tool */}
-          {pendingQuestions && (
-            <QuestionOverlay
-              questions={pendingQuestions.questions}
-              elicitation={pendingQuestions.elicitation}
-              onAccept={(answers) => {
-                const resolve = pendingQuestions.resolve;
-                const questions = pendingQuestions.questions;
-                setPendingQuestions(null);
-                const count = Object.keys(answers).length;
-                log("INFO", "ask-user-question", `User accepted ${count} answer(s)`);
-                trackQuestion({
-                  event: "question_answered",
-                  questionCount: count,
-                  outcome: "accept",
-                });
-
-                // Show a summary of answered questions (Claude Code style)
-                const answerLines = Object.entries(answers)
-                  .map(([key, val]) => {
-                    // Try to find the original question text for this key
-                    const q = questions.find((q) => q.question === key || q.header === key);
-                    const label = q?.question ?? key;
-                    return `  · ${label} → ${val}`;
-                  })
-                  .join("\n");
-                const summary = `● User answered GG Coder's questions:\n └${answerLines}`;
-                setLiveItems((prev) => [...prev, { kind: "info", text: summary, id: getId() }]);
-
-                resolve({ action: "accept", answers });
-              }}
-              onDecline={() => {
-                const resolve = pendingQuestions.resolve;
-                setPendingQuestions(null);
-                log("INFO", "ask-user-question", "User declined questions");
-                trackQuestion({
-                  event: "question_declined",
-                  questionCount: pendingQuestions.questions.length,
-                  outcome: "decline",
-                });
-                resolve({ action: "decline", answers: {} });
-              }}
-              onCancel={() => {
-                const resolve = pendingQuestions.resolve;
-                setPendingQuestions(null);
-                log("INFO", "ask-user-question", "User cancelled questions");
-                trackQuestion({
-                  event: "question_cancelled",
-                  questionCount: pendingQuestions.questions.length,
-                  outcome: "cancel",
-                });
-                resolve({ action: "cancel", answers: {} });
-              }}
-            />
-          )}
-
           {/* Input + Footer */}
           <InputArea
             onSubmit={handleSubmit}
             onAbort={handleAbort}
-            disabled={!!pendingQuestions}
             isAgentRunning={agentLoop.isRunning}
-            isActive={!taskBarFocused && !pendingQuestions && !overlay && !showPlanReview}
+            isActive={!taskBarFocused && !overlay}
             onDownAtEnd={handleFocusTaskBar}
             onShiftTab={handleShiftTabCycle}
-            onTogglePlan={handleTogglePlan}
             onToggleTasks={() => {
               stdout?.write("\x1b[2J\x1b[3J\x1b[H");
               setOverlay("tasks");
@@ -2244,7 +2029,6 @@ export function App(props: AppProps) {
               cwd={props.cwd}
               gitBranch={gitBranch}
               thinkingEnabled={thinkingEnabled}
-              planModeActive={planModeState === "planning"}
             />
           )}
           {bgTasks.length > 0 && (
