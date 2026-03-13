@@ -3,7 +3,6 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
-import type { Skill } from "../core/skills.js";
 import { resolveAgentModel, applyCommonSuffix } from "../core/builtin-agents.js";
 import { truncateTail } from "./truncate.js";
 
@@ -37,40 +36,11 @@ export interface SubAgentDetails {
   durationMs: number;
 }
 
-/**
- * Resolve skill names from an agent's `skills` field to actual Skill content,
- * then format them for injection into the agent's system prompt.
- */
-function resolvePreloadedSkills(skillNames: string[], availableSkills: Skill[]): string {
-  if (skillNames.length === 0 || availableSkills.length === 0) return "";
-
-  const skillMap = new Map(availableSkills.map((s) => [s.name.toLowerCase(), s]));
-  const resolved: Skill[] = [];
-
-  for (const name of skillNames) {
-    const skill = skillMap.get(name.toLowerCase());
-    if (skill) resolved.push(skill);
-  }
-
-  if (resolved.length === 0) return "";
-
-  const parts = ["\n\n## Preloaded Skills\n"];
-  for (const skill of resolved) {
-    parts.push(`### ${skill.name}${skill.description ? ` — ${skill.description}` : ""}`);
-    parts.push(skill.content);
-    parts.push("");
-  }
-  parts.push("Follow the conventions and patterns from the preloaded skills.\n");
-
-  return parts.join("\n");
-}
-
 export function createSubAgentTool(
   cwd: string,
   agents: AgentDefinition[],
   parentProvider: string,
   parentModel: string,
-  availableSkills?: Skill[],
 ): AgentTool<typeof SubAgentParams> {
   // Sub-sub-agent prevention: if we're already a subagent, return a tool
   // that always errors. This prevents infinite recursion.
@@ -127,18 +97,9 @@ export function createSubAgentTool(
       const useModel = resolveAgentModel(agentDef?.model, parentProvider, parentModel);
       const useProvider = parentProvider;
 
-      // Build the system prompt:
-      // 1. Start with the agent's base system prompt
-      // 2. Inject preloaded skills if the agent has a `skills` field
-      // 3. Apply common suffix for subagent response format
+      // Build the system prompt — apply common suffix for subagent response format
       let systemPrompt = agentDef?.systemPrompt ?? "";
       if (systemPrompt) {
-        // Inject preloaded skills
-        if (agentDef?.skills && agentDef.skills.length > 0 && availableSkills) {
-          systemPrompt += resolvePreloadedSkills(agentDef.skills, availableSkills);
-        }
-
-        // Apply common suffix — subagents get concise report instructions
         systemPrompt = applyCommonSuffix(systemPrompt, true);
       }
 

@@ -90,18 +90,6 @@ prompt`;
     expect(agent.background).toBe(true);
   });
 
-  it("parses skills list", () => {
-    const raw = `---
-name: api-dev
-description: API developer
-skills: api-conventions, error-handling
----
-Implement API endpoints.`;
-
-    const agent = parseAgentFile(raw, "project");
-    expect(agent.skills).toEqual(["api-conventions", "error-handling"]);
-  });
-
   it("parses permissionMode with camelCase key", () => {
     const raw = `---
 name: planner
@@ -169,7 +157,6 @@ disallowed-tools: subagent
 model: claude-opus-4-6
 max-turns: 100
 background: true
-skills: deploy, review
 permission-mode: acceptEdits
 ---
 
@@ -184,7 +171,6 @@ You are a fully configured agent.`;
       model: "claude-opus-4-6",
       maxTurns: 100,
       background: true,
-      skills: ["deploy", "review"],
       permissionMode: "acceptEdits",
       source: "project",
     } satisfies Partial<AgentDefinition>);

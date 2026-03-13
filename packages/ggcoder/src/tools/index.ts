@@ -13,13 +13,11 @@ import { createTaskOutputTool } from "./task-output.js";
 import { createTaskStopTool } from "./task-stop.js";
 import { createTasksTool } from "./tasks.js";
 import type { AgentDefinition } from "../core/agents.js";
-import type { Skill } from "../core/skills.js";
 
 export interface CreateToolsOptions {
   agents?: AgentDefinition[];
   provider?: string;
   model?: string;
-  skills?: Skill[];
 }
 
 export interface CreateToolsResult {
@@ -46,7 +44,7 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
   ];
 
   if (opts?.agents && opts.agents.length > 0 && opts.provider && opts.model) {
-    tools.push(createSubAgentTool(cwd, opts.agents, opts.provider, opts.model, opts.skills));
+    tools.push(createSubAgentTool(cwd, opts.agents, opts.provider, opts.model));
   }
 
   return { tools, processManager };

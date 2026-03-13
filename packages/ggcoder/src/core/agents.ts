@@ -11,7 +11,6 @@ export interface AgentDefinition {
   model?: string;
   maxTurns?: number;
   background?: boolean;
-  skills?: string[];
   permissionMode?: PermissionMode;
   systemPrompt: string;
   source: "global" | "project" | "builtin";
@@ -95,7 +94,6 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
   let model: string | undefined;
   let maxTurns: number | undefined;
   let background: boolean | undefined;
-  let skills: string[] | undefined;
   let permissionMode: PermissionMode | undefined;
   let systemPrompt = raw;
 
@@ -129,11 +127,6 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
           if (!isNaN(parsed) && parsed > 0) maxTurns = parsed;
         } else if (key === "background") {
           background = value.toLowerCase() === "true";
-        } else if (key === "skills") {
-          skills = value
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
         } else if (key === "permissionmode" || key === "permission-mode") {
           const validModes: PermissionMode[] = [
             "default",
@@ -157,7 +150,6 @@ export function parseAgentFile(raw: string, source: "global" | "project"): Agent
     model,
     maxTurns,
     background,
-    skills,
     permissionMode,
     systemPrompt,
     source,
@@ -180,9 +172,6 @@ function serializeAgent(agent: AgentDefinition): string {
   if (agent.model) lines.push(`model: ${agent.model}`);
   if (agent.maxTurns) lines.push(`max-turns: ${agent.maxTurns}`);
   if (agent.background) lines.push(`background: true`);
-  if (agent.skills && agent.skills.length > 0) {
-    lines.push(`skills: ${agent.skills.join(", ")}`);
-  }
   if (agent.permissionMode) lines.push(`permission-mode: ${agent.permissionMode}`);
   lines.push("---");
   lines.push("");

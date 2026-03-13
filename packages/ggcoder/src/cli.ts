@@ -27,7 +27,6 @@ import { getContextWindow } from "./core/model-registry.js";
 import { MCPClientManager, getMCPServers } from "./core/mcp/index.js";
 import { discoverAgents } from "./core/agents.js";
 import { BUILTIN_AGENTS } from "./core/builtin-agents.js";
-import { discoverSkills } from "./core/skills.js";
 import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./core/oauth/types.js";
@@ -322,19 +321,12 @@ async function runInkTUI(opts: {
     ...userAgents,
   ];
 
-  // Discover skills (for subagent preloading and future /skills command)
-  const skills = await discoverSkills({
-    globalSkillsDir: paths.skillsDir,
-    projectDir: cwd,
-  });
-
   // Build system prompt & tools (with sub-agent support)
   const systemPrompt = opts.systemPrompt ?? (await buildSystemPrompt(cwd));
   const { tools, processManager } = createTools(cwd, {
     agents,
     provider,
     model,
-    skills,
   });
 
   // Connect MCP servers
