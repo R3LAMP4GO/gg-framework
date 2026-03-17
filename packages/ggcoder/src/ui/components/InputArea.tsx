@@ -248,8 +248,8 @@ export function InputArea({
         return;
       }
 
-      // Ctrl+I — paste image from clipboard
-      if (key.ctrl && input === "i") {
+      // Ctrl+V — paste image from clipboard
+      if (key.ctrl && input === "v") {
         getClipboardImage().then((img) => {
           if (img) setImages((prev) => [...prev, img]);
         });
