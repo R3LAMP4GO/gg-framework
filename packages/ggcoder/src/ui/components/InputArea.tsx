@@ -1,11 +1,17 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { Text, Box, useInput, useStdin } from "ink";
+import { Text, Box, useInput, useStdin, useApp } from "ink";
 import type { EventEmitter } from "events";
 import { useTheme } from "../theme/theme.js";
 import { useAnimationTick, deriveFrame } from "./AnimationContext.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import type { ImageAttachment } from "../../utils/image.js";
-import { extractImagePaths, readImageFile, getClipboardImage } from "../../utils/image.js";
+import {
+  extractImagePaths,
+  readImageFile,
+  getClipboardImage,
+  clipboardHasImage,
+  getNoImageMessage,
+} from "../../utils/image.js";
 import { SlashCommandMenu, filterCommands, type SlashCommandInfo } from "./SlashCommandMenu.js";
 
 const MAX_VISIBLE_LINES = 5;
@@ -21,6 +27,8 @@ interface InputAreaProps {
   onSubmit: (value: string, images: ImageAttachment[], paste?: PasteInfo) => void;
   onAbort: () => void;
   disabled?: boolean;
+  /** When true, input stays typeable but submissions are queued */
+  isAgentRunning?: boolean;
   isActive?: boolean;
   onDownAtEnd?: () => void;
   onShiftTab?: () => void;
@@ -67,7 +75,8 @@ function wrapLine(text: string, contentWidth: number): string[] {
 }
 
 function getVisualLines(text: string, columns: number): string[] {
-  const contentWidth = Math.max(MIN_CONTENT_WIDTH, columns - PROMPT.length - BOX_OVERHEAD);
+  const contentWidth = columns - PROMPT.length - BOX_OVERHEAD;
+  if (contentWidth <= 0) return [text];
   if (text.length === 0) return [""];
 
   // Split on real newlines first, then wrap each
@@ -83,6 +92,7 @@ export function InputArea({
   onSubmit,
   onAbort,
   disabled = false,
+  isAgentRunning = false,
   isActive = true,
   onDownAtEnd,
   onShiftTab,
@@ -93,10 +103,14 @@ export function InputArea({
   commands = [],
 }: InputAreaProps) {
   const theme = useTheme();
+  const app = useApp();
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const historyRef = useRef<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+  const [imageStatus, setImageStatus] = useState<string | null>(null);
+  const pastingRef = useRef(false);
+  const historyRef = useRef<Array<{ text: string; images: ImageAttachment[] }>>([]);
   const historyIndexRef = useRef(-1);
   const lastEscRef = useRef(0);
   const { columns } = useTerminalSize();
@@ -129,6 +143,13 @@ export function InputArea({
   const borderFrame = disabled ? 0 : deriveFrame(tick, 800, borderPulseColors.length);
   // Cursor blink: ~530ms period → visible for ~500ms, hidden for ~500ms
   const cursorVisible = !isActive || deriveFrame(tick, 530, 2) === 0;
+
+  // Auto-clear image status message after 3 seconds
+  useEffect(() => {
+    if (!imageStatus) return;
+    const timer = setTimeout(() => setImageStatus(null), 3000);
+    return () => clearTimeout(timer);
+  }, [imageStatus]);
 
   // Auto-detect image paths as they're pasted/typed — debounce so full paste arrives
   const extractingRef = useRef(false);
@@ -233,19 +254,22 @@ export function InputArea({
           const selected = filteredCommands[Math.min(menuIndex, filteredCommands.length - 1)];
           const cmd = "/" + selected.name;
           // Submit the command directly
-          historyRef.current.push(cmd);
+          historyRef.current.push({ text: cmd, images: [] });
           historyIndexRef.current = -1;
           onSubmit(cmd, []);
           setValue("");
           setCursor(0);
           setImages([]);
+          setSelectedImageIndex(null);
           setPasteText("");
           return;
         }
 
         const trimmed = value.trim();
         if (trimmed || images.length > 0) {
-          if (trimmed) historyRef.current.push(trimmed);
+          if (trimmed || images.length > 0) {
+            historyRef.current.push({ text: trimmed, images: [...images] });
+          }
           historyIndexRef.current = -1;
           // Compute paste info adjusted for trimming
           const trimLeading = value.length - value.trimStart().length;
@@ -261,16 +285,36 @@ export function InputArea({
           setValue("");
           setCursor(0);
           setImages([]);
+          setSelectedImageIndex(null);
           setPasteText("");
         }
         return;
       }
 
-      // Ctrl+V — paste image from clipboard
+      // Ctrl+V — paste image from clipboard (like Claude Code)
+      // Check clipboard for image first; if none, let text paste through normally
       if (key.ctrl && input === "v") {
-        getClipboardImage().then((img) => {
-          if (img) setImages((prev) => [...prev, img]);
-        });
+        if (pastingRef.current) return;
+        pastingRef.current = true;
+        clipboardHasImage()
+          .then(async (hasImage) => {
+            if (hasImage) {
+              const img = await getClipboardImage();
+              if (img) {
+                setImages((prev) => [...prev, img]);
+                setImageStatus(`📎 Image pasted`);
+              } else {
+                setImageStatus(getNoImageMessage());
+              }
+            }
+            // If no image on clipboard, do nothing — Ink handles text paste natively
+          })
+          .catch(() => {
+            // Clipboard check failed — ignore
+          })
+          .finally(() => {
+            pastingRef.current = false;
+          });
         return;
       }
 
@@ -287,7 +331,8 @@ export function InputArea({
       }
 
       if (key.ctrl && input === "d") {
-        process.exit(0);
+        app.exit();
+        return;
       }
 
       // Home / End
@@ -301,6 +346,16 @@ export function InputArea({
       }
 
       if (key.backspace || key.delete) {
+        // Delete selected image
+        if (selectedImageIndex !== null) {
+          setImages((prev) => prev.filter((_, i) => i !== selectedImageIndex));
+          setSelectedImageIndex(null);
+          return;
+        }
+        // Exit collapsed paste view so user can see and edit the actual text
+        if (pasteText) {
+          setPasteText("");
+        }
         if (cursor > 0) {
           setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor));
           setCursor((c) => c - 1);
@@ -316,6 +371,15 @@ export function InputArea({
           setMenuIndex((i) => Math.max(0, i - 1));
           return;
         }
+        // Select/cycle images when images are attached
+        if (images.length > 0) {
+          if (selectedImageIndex === null) {
+            setSelectedImageIndex(images.length - 1);
+          } else if (selectedImageIndex > 0) {
+            setSelectedImageIndex(selectedImageIndex - 1);
+          }
+          return;
+        }
         const history = historyRef.current;
         if (history.length === 0) return;
         const newIndex =
@@ -323,8 +387,11 @@ export function InputArea({
             ? history.length - 1
             : Math.max(0, historyIndexRef.current - 1);
         historyIndexRef.current = newIndex;
-        setValue(history[newIndex]);
-        setCursor(history[newIndex].length);
+        const entry = history[newIndex];
+        setValue(entry.text);
+        setCursor(entry.text.length);
+        setImages(entry.images);
+        setSelectedImageIndex(null);
         return;
       }
 
@@ -332,6 +399,11 @@ export function InputArea({
         // If slash menu is open, navigate it
         if (isSlashMode && filteredCommands.length > 0) {
           setMenuIndex((i) => Math.min(filteredCommands.length - 1, i + 1));
+          return;
+        }
+        // Deselect image on down arrow
+        if (selectedImageIndex !== null) {
+          setSelectedImageIndex(null);
           return;
         }
         const history = historyRef.current;
@@ -344,15 +416,28 @@ export function InputArea({
           historyIndexRef.current = -1;
           setValue("");
           setCursor(0);
+          setImages([]);
         } else {
           historyIndexRef.current = newIndex;
-          setValue(history[newIndex]);
-          setCursor(history[newIndex].length);
+          const entry = history[newIndex];
+          setValue(entry.text);
+          setCursor(entry.text.length);
+          setImages(entry.images);
+          setSelectedImageIndex(null);
         }
         return;
       }
 
       if (key.escape) {
+        // When the agent is running, ESC aborts it
+        if (isAgentRunning) {
+          onAbort();
+          return;
+        }
+        if (selectedImageIndex !== null) {
+          setSelectedImageIndex(null);
+          return;
+        }
         const now = Date.now();
         if ((value || images.length > 0) && now - lastEscRef.current < 400) {
           setValue("");
@@ -381,16 +466,27 @@ export function InputArea({
       }
 
       if (key.leftArrow) {
+        // Navigate between selected images
+        if (selectedImageIndex !== null && images.length > 1) {
+          setSelectedImageIndex((i) => (i !== null && i > 0 ? i - 1 : i));
+          return;
+        }
         if (cursor > 0) setCursor((c) => c - 1);
         return;
       }
 
       if (key.rightArrow) {
+        // Navigate between selected images
+        if (selectedImageIndex !== null && images.length > 1) {
+          setSelectedImageIndex((i) => (i !== null && i < images.length - 1 ? i + 1 : i));
+          return;
+        }
         if (cursor < value.length) setCursor((c) => c + 1);
         return;
       }
 
       if (input) {
+        setSelectedImageIndex(null);
         const normalized = input.replace(/\r\n?/g, "\n");
         setValue((v) => v.slice(0, cursor) + normalized + v.slice(cursor));
         setCursor((c) => c + normalized.length);
@@ -398,6 +494,10 @@ export function InputArea({
         // Detect paste: Ink delivers pasted text as input.length > 1
         // For large pastes, Ink may split into multiple chunks, so we
         // accumulate and debounce to capture the full paste.
+        // Single-character input means the user is typing — exit collapsed paste view
+        if (input.length === 1 && pasteText) {
+          setPasteText("");
+        }
         if (input.length > 1) {
           setPasteText((prev) => {
             if (!prev) setPasteOffset(cursor); // record where paste starts on first chunk
@@ -465,14 +565,41 @@ export function InputArea({
   const displayLines = visualLines.slice(startLine, startLine + MAX_VISIBLE_LINES);
   const cursorDisplayLine = cursorLineInfo.line - startLine;
 
-  // Determine if the input starts with a slash command and find command boundary
-  const isCommand = value.startsWith("/");
-  // Command portion ends at first space (e.g., "/research" in "/research some args")
-  const commandEndIndex = isCommand
-    ? value.indexOf(" ") === -1
-      ? value.length
-      : value.indexOf(" ")
-    : 0;
+  // Build a set of known command names for highlighting (start-of-line + inline)
+  const knownCommandNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const cmd of commands) {
+      names.add(cmd.name);
+      for (const alias of cmd.aliases) names.add(alias);
+    }
+    return names;
+  }, [commands]);
+
+  // Determine if the input starts with a known slash command and find command boundary
+  const commandEndIndex = useMemo(() => {
+    if (!value.startsWith("/")) return 0;
+    const spaceIdx = value.indexOf(" ");
+    const cmdToken = spaceIdx === -1 ? value.slice(1) : value.slice(1, spaceIdx);
+    if (!knownCommandNames.has(cmdToken.toLowerCase())) return 0;
+    return spaceIdx === -1 ? value.length : spaceIdx;
+  }, [value, knownCommandNames]);
+  const isCommand = commandEndIndex > 0;
+
+  // Find all inline /command token positions for highlighting
+  const inlineCommandRanges = useMemo(() => {
+    if (isCommand) return []; // start-of-line commands use the existing highlight
+    const ranges: Array<{ start: number; end: number }> = [];
+    const regex = /(?:^|\s)(\/([a-z][\w-]*))/gi;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(value)) !== null) {
+      const name = match[2].toLowerCase();
+      if (knownCommandNames.has(name)) {
+        const tokenStart = match.index + match[0].length - match[1].length;
+        ranges.push({ start: tokenStart, end: tokenStart + match[1].length });
+      }
+    }
+    return ranges;
+  }, [value, isCommand, knownCommandNames]);
 
   return (
     <Box flexDirection="column" width={columns}>
@@ -485,13 +612,26 @@ export function InputArea({
       >
         {images.length > 0 && (
           <Box>
-            <Text color={theme.accent}>
-              {images
-                .map((img, i) =>
-                  img.kind === "text" ? `[File: ${img.fileName}]` : `[Image #${i + 1}]`,
-                )
-                .join(" ")}
-            </Text>
+            {images.map((img, i) => (
+              <Text
+                key={i}
+                color={i === selectedImageIndex ? theme.text : theme.accent}
+                backgroundColor={i === selectedImageIndex ? theme.error : undefined}
+                bold={i === selectedImageIndex}
+                underline={i !== selectedImageIndex}
+              >
+                {i > 0 ? " " : ""}
+                {img.kind === "text" ? `[File: ${img.fileName}]` : `[Image #${i + 1}]`}
+              </Text>
+            ))}
+            {selectedImageIndex === null ? (
+              <Text color={theme.textDim}>{" (↑ to select)"}</Text>
+            ) : (
+              <Text color={theme.textDim}>
+                {images.length > 1 ? " → to next · ← to prev · " : " "}
+                {"Delete to remove · Esc to cancel"}
+              </Text>
+            )}
           </Box>
         )}
         {(() => {
@@ -544,7 +684,7 @@ export function InputArea({
             for (let h = 0; h < hardLines.length && vlIndex <= startLine + i; h++) {
               const wrapped = wrapLine(
                 hardLines[h],
-                contentWidth > 0 ? contentWidth : value.length + 1,
+                contentWidth,
               );
               for (let w = 0; w < wrapped.length && vlIndex <= startLine + i; w++) {
                 if (vlIndex === startLine + i) {
@@ -556,34 +696,57 @@ export function InputArea({
               offset++; // newline
             }
 
-            // Determine color for each character based on whether it's in the command portion
+            // Check if a character offset falls inside a highlighted command range
+            const isInCommandRange = (absOffset: number): boolean => {
+              // Start-of-line known command
+              if (isCommand && absOffset < commandEndIndex) return true;
+              // Inline command tokens
+              for (const range of inlineCommandRanges) {
+                if (absOffset >= range.start && absOffset < range.end) return true;
+              }
+              return false;
+            };
+
+            // Render text with command tokens highlighted in blue
             const renderSegments = (text: string, textStartOffset: number) => {
-              if (!isCommand || textStartOffset >= commandEndIndex) {
+              if (inlineCommandRanges.length === 0 && !isCommand) {
                 return <Text color={theme.text}>{text}</Text>;
               }
-              const cmdChars = Math.min(text.length, commandEndIndex - textStartOffset);
-              if (cmdChars >= text.length) {
-                return (
-                  <Text color={theme.commandColor} bold>
-                    {text}
-                  </Text>
-                );
+              // Split text into highlighted and non-highlighted segments
+              const segments: React.ReactNode[] = [];
+              let pos = 0;
+              while (pos < text.length) {
+                const absPos = textStartOffset + pos;
+                if (isInCommandRange(absPos)) {
+                  // Find the end of the highlighted run
+                  let end = pos + 1;
+                  while (end < text.length && isInCommandRange(textStartOffset + end)) end++;
+                  segments.push(
+                    <Text key={`cmd-${pos}`} color={theme.commandColor} bold>
+                      {text.slice(pos, end)}
+                    </Text>,
+                  );
+                  pos = end;
+                } else {
+                  // Find the end of the non-highlighted run
+                  let end = pos + 1;
+                  while (end < text.length && !isInCommandRange(textStartOffset + end)) end++;
+                  segments.push(
+                    <Text key={`txt-${pos}`} color={theme.text}>
+                      {text.slice(pos, end)}
+                    </Text>,
+                  );
+                  pos = end;
+                }
               }
-              return (
-                <>
-                  <Text color={theme.commandColor} bold>
-                    {text.slice(0, cmdChars)}
-                  </Text>
-                  <Text color={theme.text}>{text.slice(cmdChars)}</Text>
-                </>
-              );
+              return <>{segments}</>;
             };
 
             const before = showCursor ? line.slice(0, col) : line;
             const charUnderCursor = showCursor ? (col < line.length ? line[col] : " ") : "";
             const after = showCursor ? line.slice(col + (col < line.length ? 1 : 0)) : "";
             const cursorCharOffset = lineStartOffset + col;
-            const cursorInCommand = isCommand && cursorCharOffset < commandEndIndex;
+            const cursorInCommand = isInCommandRange(cursorCharOffset);
 
             return (
               <Box key={i}>
@@ -607,6 +770,39 @@ export function InputArea({
           });
         })()}
       </Box>
+      {/* Image paste status message */}
+      {imageStatus && (
+        <Box paddingLeft={1}>
+          <Text color={theme.textDim}>{imageStatus}</Text>
+        </Box>
+      )}
+      {/* Queue hint — shown when agent is running and user has typed something */}
+      {isAgentRunning && !disabled && value.length > 0 && !imageStatus && (
+        <Box paddingLeft={1}>
+          <Text color={theme.warning ?? theme.accent}>
+            {"⏳ Enter to queue — will send after current task"}
+          </Text>
+        </Box>
+      )}
+      {/* Hints — shown when input is empty and not disabled */}
+      {!disabled && value.length === 0 && !isSlashMode && !imageStatus && (
+        <Box paddingLeft={1}>
+          {isAgentRunning ? (
+            <Text color={theme.textDim}>{"Type to queue a message…"}</Text>
+          ) : (
+            <>
+              <Text color={theme.textDim}>{"⌥Tab "}</Text>
+              <Text color={theme.border}>{"plan"}</Text>
+              <Text color={theme.textDim}>{" · "}</Text>
+              <Text color={theme.textDim}>{"⇧` "}</Text>
+              <Text color={theme.border}>{"tasks"}</Text>
+              <Text color={theme.textDim}>{" · "}</Text>
+              <Text color={theme.textDim}>{"/ "}</Text>
+              <Text color={theme.border}>{"commands"}</Text>
+            </>
+          )}
+        </Box>
+      )}
       {/* Slash command menu — shown below the input box */}
       {isSlashMode && filteredCommands.length > 0 && (
         <SlashCommandMenu commands={commands} filter={slashFilter} selectedIndex={menuIndex} />

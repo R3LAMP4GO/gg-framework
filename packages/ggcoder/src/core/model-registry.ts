@@ -146,3 +146,41 @@ export function getSummaryModel(provider: Provider, currentModelId: string): Mod
   // Moonshot or fallback: use current model
   return getModel(currentModelId) ?? getDefaultModel(provider);
 }
+
+/**
+ * Get the cheapest available model for a provider.
+ * Used for explore agents and other cost-sensitive operations.
+ */
+export function getCheapestModel(provider: Provider): string {
+  switch (provider) {
+    case "anthropic":
+      return "claude-haiku-4-5-20251001";
+    case "openai":
+      return "gpt-5.1-codex-mini";
+    case "glm":
+      return "glm-4.7";
+    case "moonshot":
+      return "kimi-k2.5";
+    default:
+      return MODELS.find((m) => m.costTier === "low")?.id ?? MODELS[0].id;
+  }
+}
+
+/**
+ * Get a mid-tier model for a provider.
+ * Used for plan agents that need more capability than haiku but less than opus.
+ */
+export function getMidTierModel(provider: Provider, currentModel: string): string {
+  switch (provider) {
+    case "anthropic":
+      return "claude-sonnet-4-6";
+    case "openai":
+      return "gpt-5.1-codex-mini";
+    case "glm":
+      return "glm-5";
+    case "moonshot":
+      return "kimi-k2.5";
+    default:
+      return currentModel;
+  }
+}

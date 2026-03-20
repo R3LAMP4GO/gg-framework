@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
+import { resolveAgentModel, applyCommonSuffix, type BuiltinAgentDefinition } from "../core/builtin-agents.js";
 import { truncateTail } from "./truncate.js";
 
 const SUB_AGENT_MAX_TURNS = 10;
@@ -15,7 +16,12 @@ const SubAgentParams = z.object({
   agent: z
     .string()
     .optional()
-    .describe("Named agent definition to use (from ~/.gg/agents/ or .gg/agents/)"),
+    .describe(
+      'Named agent to use. Built-in: "explore" (fast read-only search), ' +
+        '"plan" (architecture/planning), "worker" (full-capability), ' +
+        '"fork" (isolated worker for parallel task execution). ' +
+        "Or a custom agent from ~/.gg/agents/ or .gg/agents/",
+    ),
 });
 
 export interface SubAgentUpdate {
@@ -37,15 +43,41 @@ export function createSubAgentTool(
   parentModel: string,
   planModeRef?: { current: boolean },
 ): AgentTool<typeof SubAgentParams> {
+  // Sub-sub-agent prevention: if we're already a subagent, return a tool
+  // that always errors. This prevents infinite recursion.
+  if (process.env.GG_IS_SUBAGENT === "1") {
+    return {
+      name: "subagent",
+      description: "Sub-agents cannot spawn other sub-agents.",
+      parameters: SubAgentParams,
+      async execute() {
+        return "Error: Sub-agents cannot spawn other sub-agents. Complete the task directly.";
+      },
+    };
+  }
+
   const agentList = agents.map((a) => `- ${a.name}: ${a.description}`).join("\n");
-  const agentDesc = agentList
-    ? `\n\nAvailable named agents:\n${agentList}`
-    : "\n\nNo named agents configured.";
+  const agentDesc = agentList ? `\n\nAvailable agents:\n${agentList}` : "";
 
   return {
     name: "subagent",
     description:
-      `Spawn an isolated sub-agent to handle a focused task. The sub-agent runs as a separate process with its own context window, tools, and system prompt. Use this for tasks that benefit from isolation or parallelism.` +
+      `Spawn an isolated sub-agent. IMPORTANT: Each spawn creates a new process with its own context — ` +
+      `there is real overhead. Do NOT spawn an agent when you can accomplish the task yourself ` +
+      `with 1-3 tool calls (grep, find, read). Only spawn when:\n` +
+      `- You need PARALLEL execution of 2+ independent tasks\n` +
+      `- The task requires 5+ tool calls and the output would bloat your context\n` +
+      `- You need deep research across many files in unfamiliar code\n\n` +
+      `Do NOT spawn when:\n` +
+      `- A single grep + read answers the question\n` +
+      `- You already have the relevant files in context\n` +
+      `- You need the result for your very next edit (round-trip overhead wastes tokens)\n` +
+      `- The task is trivial (finding a file, checking a type, reading a config)\n\n` +
+      `Built-in agents:\n` +
+      `- explore: Read-only codebase search (cheapest model). For broad searches across many files.\n` +
+      `- plan: Architecture/planning (read-only)\n` +
+      `- worker: Full-capability for complex multi-step tasks\n` +
+      `- fork: Parallel execution — each fork handles one unit of work` +
       agentDesc,
     parameters: SubAgentParams,
     async execute(args, context) {
@@ -66,6 +98,8 @@ export function createSubAgentTool(
         }
       }
 
+      // Resolve model — agents can specify "haiku", "sonnet", "inherit", or a specific model ID
+      const useModel = resolveAgentModel((agentDef as BuiltinAgentDefinition | undefined)?.model, parentProvider, parentModel);
       const useProvider = parentProvider;
 
       // Build CLI args — limit turns to prevent runaway context growth
@@ -74,7 +108,7 @@ export function createSubAgentTool(
         "--provider",
         useProvider,
         "--model",
-        parentModel,
+        useModel,
         "--max-turns",
         String(SUB_AGENT_MAX_TURNS),
       ];
