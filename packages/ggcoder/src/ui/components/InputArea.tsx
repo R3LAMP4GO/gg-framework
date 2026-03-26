@@ -164,6 +164,8 @@ export function InputArea({
   const theme = useTheme();
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const historyRef = useRef<string[]>([]);
@@ -805,18 +807,22 @@ export function InputArea({
           setValue(
             sel.newValue.slice(0, sel.newCursor) + normalized + sel.newValue.slice(sel.newCursor),
           );
-          setCursor(sel.newCursor + normalized.length);
+          const newCur = sel.newCursor + normalized.length;
+          setCursor(newCur);
+          cursorRef.current = newCur;
           setSelectionAnchor(null);
         } else {
-          setValue((v) => v.slice(0, cursor) + normalized + v.slice(cursor));
-          setCursor((c) => c + normalized.length);
+          const cur = cursorRef.current;
+          setValue((v) => v.slice(0, cur) + normalized + v.slice(cur));
+          setCursor(cur + normalized.length);
+          cursorRef.current = cur + normalized.length;
         }
 
         // Detect paste: Ink delivers pasted text as input.length > 1
         // For large pastes, Ink may split into multiple chunks, so we
         // accumulate and debounce to capture the full paste.
         if (input.length > 1) {
-          const pasteStart = sel ? sel.newCursor : cursor;
+          const pasteStart = sel ? sel.newCursor : cursorRef.current - normalized.length;
           setPasteText((prev) => {
             if (!prev) setPasteOffset(pasteStart);
             return prev + normalized;
