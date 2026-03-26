@@ -60,7 +60,36 @@ export function Markdown({ children, width: explicitWidth }: { children: string;
         trailingFragment = lines.pop()!;
       }
     }
-    return { body: lines.join("\n"), trailingFragment };
+
+    // Detect unclosed code fences: if there's an opening ``` without a matching
+    // close, strip just the opening fence line so marked doesn't swallow all
+    // subsequent content (lists, bullets, etc.) into one giant code block.
+    // The content after the fence is kept in the body as regular markdown.
+    let body = lines.join("\n");
+    const fencePattern = /^(`{3,}|~{3,})([^\n]*)/m;
+    let searchFrom = 0;
+    while (searchFrom < body.length) {
+      const openMatch = fencePattern.exec(body.slice(searchFrom));
+      if (!openMatch) break;
+      const openIdx = searchFrom + openMatch.index;
+      const fence = openMatch[1];
+      const afterOpen = body.indexOf("\n", openIdx);
+      if (afterOpen === -1) break; // fence is the last line
+      // Find the closing fence (same char, same or more length, at start of line)
+      const closePattern = new RegExp(`^${fence[0]}{${fence.length},}\\s*$`, "m");
+      const closeMatch = closePattern.exec(body.slice(afterOpen));
+      if (closeMatch) {
+        // Fence is closed — skip past it
+        searchFrom = afterOpen + closeMatch.index + closeMatch[0].length;
+      } else {
+        // Unclosed fence — remove the opening fence line so the content
+        // after it gets parsed as normal markdown (lists, bullets, etc.)
+        body = body.slice(0, openIdx) + body.slice(afterOpen + 1);
+        break;
+      }
+    }
+
+    return { body, trailingFragment };
   }, [children]);
 
   const tokens = useMemo(() => marked.lexer(stabilised.body), [stabilised.body]);
@@ -140,14 +169,19 @@ function renderToken(token: Token, theme: Theme, key: number, columns: number): 
       const lang = (token as Tokens.Code).lang ?? "";
       const raw = (token as Tokens.Code).text;
 
-      // No language tag → likely prose dumped in backticks; render as wrapped text
+      // No language tag → render as pre-formatted block preserving line structure
       if (!lang) {
+        const codeLines = raw.split("\n");
         return (
-          <Box key={key} marginTop={gap} paddingLeft={1}>
-            <Text color={theme.border}>{"▎ "}</Text>
-            <Box flexShrink={1}>
-              <Text color={theme.text}>{raw.replace(/\n/g, " ")}</Text>
-            </Box>
+          <Box key={key} marginTop={gap} paddingLeft={1} flexDirection="column">
+            {codeLines.map((line: string, idx: number) => (
+              <Box key={idx}>
+                <Text color={theme.border}>{"▎ "}</Text>
+                <Box flexShrink={1}>
+                  <Text color={theme.text}>{line}</Text>
+                </Box>
+              </Box>
+            ))}
           </Box>
         );
       }
