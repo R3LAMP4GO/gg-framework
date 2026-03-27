@@ -199,7 +199,7 @@ export const BUILTIN_AGENTS: BuiltinAgentDefinition[] = [
       "identifies critical files, and considers architectural trade-offs.",
     tools: ["read", "grep", "find", "ls", "bash"],
     disallowedTools: ["write", "edit", "subagent"],
-    model: "inherit", // Inherits from parent
+    model: "mid", // Sonnet — mid-tier for planning
     maxTurns: 15,
     systemPrompt: PLAN_SYSTEM_PROMPT,
     source: "global",

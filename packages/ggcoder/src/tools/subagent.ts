@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
-import { resolveAgentModel, applyCommonSuffix, type BuiltinAgentDefinition } from "../core/builtin-agents.js";
+import { resolveAgentModel, type BuiltinAgentDefinition } from "../core/builtin-agents.js";
 import { truncateTail } from "./truncate.js";
 
 const SUB_AGENT_MAX_TURNS = 10;
