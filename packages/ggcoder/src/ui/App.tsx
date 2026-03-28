@@ -49,6 +49,13 @@ import { PROMPT_COMMANDS, getPromptCommand } from "../core/prompt-commands.js";
 import { loadCustomCommands, type CustomCommand } from "../core/custom-commands.js";
 import { buildSystemPrompt } from "../system-prompt.js";
 import type { Skill } from "../core/skills.js";
+import { PlanProgress } from "./components/PlanProgress.js";
+import {
+  extractPlanSteps,
+  findCompletedMarkers,
+  markStepsCompleted,
+  type PlanStep,
+} from "../utils/plan-steps.js";
 import type { MCPClientManager } from "../core/mcp/index.js";
 import { getMCPServers } from "../core/mcp/index.js";
 import type { AuthStorage } from "../core/auth-storage.js";
@@ -221,6 +228,12 @@ interface PlanTransitionItem {
   id: string;
 }
 
+interface PlanProgressItem {
+  kind: "plan_progress";
+  steps: PlanStep[];
+  id: string;
+}
+
 interface TombstoneItem {
   kind: "tombstone";
   id: string;
@@ -262,6 +275,7 @@ export type CompletedItem =
   | SubAgentGroupItem
   | ToolGroupItem
   | PlanTransitionItem
+  | PlanProgressItem
   | TombstoneItem;
 
 /**
@@ -505,6 +519,8 @@ export function App(props: AppProps) {
   const messagesRef = useRef<Message[]>(props.messages);
   const [planAutoExpand, setPlanAutoExpand] = useState(false);
   const approvedPlanPathRef = useRef<string | undefined>(undefined);
+  const planStepsRef = useRef<PlanStep[]>([]);
+  const [planSteps, setPlanSteps] = useState<PlanStep[]>([]);
   const nextIdRef = useRef(0);
   const sessionManagerRef = useRef(
     props.sessionsDir ? new SessionManager(props.sessionsDir) : null,
@@ -823,6 +839,18 @@ export function App(props: AppProps) {
         persistNewMessages();
       }, [persistNewMessages]),
       onTurnText: useCallback((text: string, thinking: string, thinkingMs: number) => {
+        // Track [DONE:n] markers for plan step progress
+        if (planStepsRef.current.length > 0) {
+          const completed = findCompletedMarkers(text);
+          if (completed.size > 0) {
+            const updated = markStepsCompleted(planStepsRef.current, completed);
+            if (updated !== planStepsRef.current) {
+              planStepsRef.current = updated;
+              setPlanSteps(updated);
+            }
+          }
+        }
+
         // Flush all completed items from the previous turn to Static history.
         // This keeps liveItems bounded per-turn, preventing Ink's live area from
         // growing unbounded, which makes Ink's live-area re-renders expensive.
@@ -1290,6 +1318,9 @@ export function App(props: AppProps) {
         setHistory([{ kind: "banner", id: "banner" }]);
         setLiveItems([]);
         setDoneStatus(null);
+        approvedPlanPathRef.current = undefined;
+        planStepsRef.current = [];
+        setPlanSteps([]);
         messagesRef.current = messagesRef.current.slice(0, 1); // keep system prompt
         agentLoop.reset();
         setLiveItems([{ kind: "info", text: "Session cleared.", id: getId() }]);
@@ -1316,6 +1347,22 @@ export function App(props: AppProps) {
             id: getId(),
           },
         ]);
+        return;
+      }
+
+      // Handle /clearplan — dismiss the approved plan
+      if (trimmed === "/clearplan") {
+        approvedPlanPathRef.current = undefined;
+        planStepsRef.current = [];
+        setPlanSteps([]);
+        // Rebuild system prompt without the plan
+        void (async () => {
+          const newPrompt = await buildSystemPrompt(props.cwd, props.skills, planMode, undefined);
+          if (messagesRef.current[0]?.role === "system") {
+            messagesRef.current[0] = { role: "system" as const, content: newPrompt };
+          }
+        })();
+        setLiveItems([{ kind: "info", text: "Approved plan dismissed.", id: getId() }]);
         return;
       }
 
@@ -1733,6 +1780,8 @@ export function App(props: AppProps) {
             </Text>
           </Box>
         );
+      case "plan_progress":
+        return <PlanProgress key={item.id} steps={item.steps} />;
       case "queued":
         return (
           <Box key={item.id} marginTop={1}>
@@ -1898,6 +1947,15 @@ export function App(props: AppProps) {
             // Store approved plan path — will be injected into the new system prompt
             approvedPlanPathRef.current = planPath;
 
+            // Extract plan steps for progress tracking
+            void import("node:fs/promises").then(({ readFile }) =>
+              readFile(planPath, "utf-8").then((content) => {
+                const steps = extractPlanSteps(content);
+                planStepsRef.current = steps;
+                setPlanSteps(steps);
+              }),
+            );
+
             // Clear session for a fresh context focused on the plan
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setHistory([{ kind: "banner", id: "banner" }]);
@@ -1956,6 +2014,7 @@ export function App(props: AppProps) {
           {/* Content area */}
           <Box flexDirection="column" flexGrow={1} paddingRight={1}>
             {liveItems.map((item) => renderItem(item))}
+            {planSteps.length > 0 && agentLoop.isRunning && <PlanProgress steps={planSteps} />}
             <StreamingArea
               isRunning={agentLoop.isRunning}
               streamingText={agentLoop.streamingText}

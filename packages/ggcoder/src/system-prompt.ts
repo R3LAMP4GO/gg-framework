@@ -83,7 +83,10 @@ export async function buildSystemPrompt(
           `### Rules\n` +
           `- Follow the plan's step-by-step implementation order\n` +
           `- Do not deviate from the plan without user confirmation\n` +
-          `- If you encounter issues not covered by the plan, ask the user`,
+          `- If you encounter issues not covered by the plan, ask the user\n\n` +
+          `### Progress Tracking\n` +
+          `After completing each numbered step in the plan, output \`[DONE:n]\` (e.g. \`[DONE:1]\`, \`[DONE:2]\`) ` +
+          `in your response to mark it as complete. This updates the progress widget shown to the user.`,
       );
     }
   }
