@@ -525,7 +525,7 @@ export function useAgentLoop(
                 });
                 break;
 
-              case "turn_end":
+              case "turn_end": {
                 setRetryInfo(null);
                 onTurnEnd?.(event.turn, event.stopReason, event.usage);
                 setCurrentTurn(event.turn);
@@ -533,13 +533,17 @@ export function useAgentLoop(
                   input: prev.input + event.usage.inputTokens,
                   output: prev.output + event.usage.outputTokens,
                 }));
-                // Latest turn's input tokens = current context window fill
-                // With prompt caching, input_tokens only counts non-cached tokens.
-                // Total context = input + cache_read + cache_write.
-                setContextUsed(
+                // Total input context = uncached + cache_read + cache_write.
+                // Anthropic has separate input/output limits, so only count input.
+                // OpenAI/GLM/Moonshot share the context window, so include output.
+                const inputContext =
                   event.usage.inputTokens +
-                    (event.usage.cacheRead ?? 0) +
-                    (event.usage.cacheWrite ?? 0),
+                  (event.usage.cacheRead ?? 0) +
+                  (event.usage.cacheWrite ?? 0);
+                setContextUsed(
+                  options.provider === "anthropic"
+                    ? inputContext
+                    : inputContext + event.usage.outputTokens,
                 );
                 // Replace char-based estimate with real output tokens
                 realTokensAccumRef.current += event.usage.outputTokens;
@@ -566,6 +570,7 @@ export function useAgentLoop(
                 setStreamingText("");
                 setStreamingThinking("");
                 break;
+              }
 
               case "agent_done":
                 flushAllText();
