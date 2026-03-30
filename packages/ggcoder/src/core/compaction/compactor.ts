@@ -58,10 +58,13 @@ export function shouldCompact(
   messages: Message[],
   contextWindow: number,
   threshold = 0.8,
+  /** Actual API-reported token count — preferred over char-based estimate when available. */
+  actualTokens?: number,
 ): boolean {
-  const estimated = estimateConversationTokens(messages);
+  const estimated = actualTokens ?? estimateConversationTokens(messages);
   const limit = contextWindow * threshold;
-  log("INFO", "compaction", `Context check: ${estimated} estimated tokens, threshold ${limit}`);
+  const source = actualTokens != null ? "actual" : "estimated";
+  log("INFO", "compaction", `Context check: ${estimated} ${source} tokens, threshold ${limit}`);
   return estimated > limit;
 }
 

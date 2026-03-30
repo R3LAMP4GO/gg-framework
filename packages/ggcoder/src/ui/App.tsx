@@ -560,6 +560,10 @@ export function App(props: AppProps) {
   );
   const sessionPathRef = useRef(props.sessionPath);
   const persistedIndexRef = useRef(messagesRef.current.length);
+  /** Last actual API-reported input token count (from turn_end). */
+  const lastActualTokensRef = useRef(0);
+  /** Timestamp of last compaction — used for time-based cooldown. */
+  const lastCompactionTimeRef = useRef(0);
 
   const getId = () => String(nextIdRef.current++);
 
@@ -756,6 +760,11 @@ export function App(props: AppProps) {
    * transformContext callback for the agent loop.
    * Called before each LLM call and on context overflow.
    * Checks if auto-compaction is needed and runs it.
+   *
+   * Uses actual API-reported token counts (from previous turn_end) when
+   * available, falling back to the character-based estimate. A 30-second
+   * cooldown prevents repeated compaction — matching the pattern used by
+   * Mysti, openclaw, and other real-world agent frameworks.
    */
   const transformContext = useCallback(
     async (messages: Message[], options?: { force?: boolean }): Promise<Message[]> => {
@@ -765,14 +774,29 @@ export function App(props: AppProps) {
 
       // Force-compact on context overflow regardless of settings
       if (options?.force) {
-        return compactConversation(messages);
+        const result = await compactConversation(messages);
+        lastCompactionTimeRef.current = Date.now();
+        lastActualTokensRef.current = 0; // Reset stale pre-compaction count
+        return result;
       }
 
       if (!autoCompact) return messages;
 
+      // Time-based cooldown: skip if compaction ran within the last 30 seconds
+      if (Date.now() - lastCompactionTimeRef.current < 30_000) {
+        log("INFO", "compaction", `Skipping compaction — cooldown active`);
+        return messages;
+      }
+
       const contextWindow = getContextWindow(currentModel);
-      if (shouldCompact(messages, contextWindow, threshold)) {
-        return compactConversation(messages);
+      // Prefer actual API-reported tokens over char-based estimate
+      const actualTokens =
+        lastActualTokensRef.current > 0 ? lastActualTokensRef.current : undefined;
+      if (shouldCompact(messages, contextWindow, threshold, actualTokens)) {
+        const result = await compactConversation(messages);
+        lastCompactionTimeRef.current = Date.now();
+        lastActualTokensRef.current = 0; // Reset stale pre-compaction count
+        return result;
       }
       return messages;
     },
@@ -1193,6 +1217,9 @@ export function App(props: AppProps) {
             ...(usage.cacheRead != null && { cacheRead: String(usage.cacheRead) }),
             ...(usage.cacheWrite != null && { cacheWrite: String(usage.cacheWrite) }),
           });
+          // Track actual token count for compaction decisions
+          lastActualTokensRef.current =
+            usage.inputTokens + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
           // For tool-only turns (no text), flush completed items to Static so
           // liveItems doesn't grow unbounded across consecutive tool-only turns.
           setLiveItems((prev) => {
