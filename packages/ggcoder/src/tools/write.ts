@@ -4,7 +4,13 @@ import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { resolvePath, rejectSymlink } from "./path-utils.js";
 import { localOperations, type ToolOperations } from "./operations.js";
-import { checkImportsResolve, checkExportsConsumed, formatWarnings } from "./wiring-checks.js";
+import {
+  checkImportsResolve,
+  checkExportsConsumed,
+  checkLocationGuard,
+  formatWarnings,
+} from "./wiring-checks.js";
+import type { EditTransaction } from "../core/edit-transaction.js";
 
 const WriteParams = z.object({
   file_path: z.string().describe("The file path to write to"),
@@ -16,6 +22,7 @@ export function createWriteTool(
   readFiles?: Set<string>,
   ops: ToolOperations = localOperations,
   planModeRef?: { current: boolean },
+  transactionRef?: { current: EditTransaction | null },
 ): AgentTool<typeof WriteParams> {
   return {
     name: "write",
@@ -50,20 +57,34 @@ export function createWriteTool(
           throw new Error("File must be read first before overwriting. Use the read tool first.");
         }
       }
+      if (transactionRef?.current) {
+        await transactionRef.current.recordSnapshot(resolved);
+      }
       await ops.writeFile(resolved, content);
       const bytes = Buffer.byteLength(content, "utf-8");
-      const base = `Wrote ${bytes} bytes to ${resolved}`;
+      let result = `Wrote ${bytes} bytes to ${resolved}`;
 
+      // Behavioral hint: prefer edit over full rewrite for existing files
+      if (readFiles?.has(resolved)) {
+        result += "\n\n💡 Tip: For surgical changes, prefer the edit tool over full rewrites.";
+      }
+
+      // Wiring checks
       const ext = path.extname(resolved).toLowerCase();
       const isCodeFile = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"].includes(ext);
       const warnings = isCodeFile ? await checkImportsResolve(content, resolved, cwd, ops) : [];
-      // Only check export consumption for genuinely new code files
       const isNewFile = !readFiles?.has(resolved);
       if (isNewFile && isCodeFile) {
         warnings.push(...(await checkExportsConsumed(resolved, cwd, ops)));
       }
       const warningText = formatWarnings(warnings);
-      return warningText ? `${base}\n\n${warningText}` : base;
+      if (warningText) result += "\n\n" + warningText;
+
+      // Location guard
+      const locationWarning = await checkLocationGuard(cwd, resolved, ops);
+      if (locationWarning) result += "\n\n" + locationWarning;
+
+      return result;
     },
   };
 }

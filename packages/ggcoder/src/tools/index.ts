@@ -17,9 +17,11 @@ import { createSkillTool } from "./skill.js";
 import { createTypecheckTool } from "./typecheck.js";
 import { createEnterPlanTool } from "./enter-plan.js";
 import { createExitPlanTool } from "./exit-plan.js";
+import { createRollbackTool } from "./rollback.js";
 import { localOperations, type ToolOperations } from "./operations.js";
 import type { AgentDefinition } from "../core/agents.js";
 import type { Skill } from "../core/skills.js";
+import type { EditTransaction } from "../core/edit-transaction.js";
 
 export interface CreateToolsOptions {
   agents?: AgentDefinition[];
@@ -36,6 +38,8 @@ export interface CreateToolsOptions {
   onExitPlan?: (planPath: string) => Promise<string>;
   /** Project-local .gg directory for scratchpad coordination. Defaults to `${cwd}/.gg`. */
   ggDir?: string;
+  /** Ref for tracking edit transactions with rollback support. */
+  transactionRef?: { current: EditTransaction | null };
 }
 
 export interface CreateToolsResult {
@@ -48,11 +52,12 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
   const processManager = new ProcessManager();
   const ops = opts?.operations ?? localOperations;
   const planModeRef = opts?.planModeRef;
+  const transactionRef = opts?.transactionRef;
 
   const tools: AgentTool[] = [
     createReadTool(cwd, readFiles, ops),
-    createWriteTool(cwd, readFiles, ops, planModeRef),
-    createEditTool(cwd, readFiles, ops, planModeRef),
+    createWriteTool(cwd, readFiles, ops, planModeRef, transactionRef),
+    createEditTool(cwd, readFiles, ops, planModeRef, transactionRef),
     createBashTool(cwd, processManager, ops, planModeRef),
     createFindTool(cwd),
     createGrepTool(cwd, ops),
@@ -81,6 +86,10 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
     tools.push(createExitPlanTool(cwd, opts.onExitPlan));
   }
 
+  if (transactionRef) {
+    tools.push(createRollbackTool(cwd, transactionRef));
+  }
+
   // Filter out disallowed tools when running as a subagent with tool restrictions
   const disallowed = process.env.GG_DISALLOWED_TOOLS;
   if (disallowed) {
@@ -107,5 +116,7 @@ export { createSkillTool } from "./skill.js";
 export { createTypecheckTool } from "./typecheck.js";
 export { createEnterPlanTool } from "./enter-plan.js";
 export { createExitPlanTool } from "./exit-plan.js";
+export { createRollbackTool } from "./rollback.js";
 export { ProcessManager } from "../core/process-manager.js";
 export { localOperations, type ToolOperations } from "./operations.js";
+export { EditTransaction } from "../core/edit-transaction.js";
