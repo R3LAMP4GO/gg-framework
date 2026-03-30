@@ -75,6 +75,7 @@ Be thorough but concise. Explore widely, report tightly.
 name: bee
 description: "Task worker \u2014 writes code, runs commands, fixes bugs, does anything"
 tools: read, write, edit, bash, find, grep, ls
+model: claude-sonnet-4-6
 ---
 
 You are Bee, an industrious task worker.
