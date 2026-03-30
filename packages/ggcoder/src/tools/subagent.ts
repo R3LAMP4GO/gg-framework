@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { AgentDefinition } from "../core/agents.js";
 import { resolveAgentModel, type BuiltinAgentDefinition } from "../core/builtin-agents.js";
+import { Scratchpad } from "../core/scratchpad.js";
 import { truncateTail } from "./truncate.js";
 
 const SUB_AGENT_MAX_TURNS = 10;
@@ -42,6 +44,7 @@ export function createSubAgentTool(
   parentProvider: string,
   parentModel: string,
   planModeRef?: { current: boolean },
+  ggDir?: string,
 ): AgentTool<typeof SubAgentParams> {
   // Sub-sub-agent prevention: if we're already a subagent, return a tool
   // that always errors. This prevents infinite recursion.
@@ -122,12 +125,39 @@ export function createSubAgentTool(
       }
       cliArgs.push(args.task);
 
+      // Build env vars for subagent coordination
+      const sessionId = process.env.GG_SESSION_ID ?? randomUUID();
+      const agentId = `${args.agent ?? "worker"}-${randomUUID().slice(0, 8)}`;
+      const childEnv: Record<string, string | undefined> = {
+        ...process.env,
+        GG_IS_SUBAGENT: "1",
+        GG_SESSION_ID: sessionId,
+        GG_AGENT_ID: agentId,
+      };
+
+      // Set disallowed tools for read-only agents
+      const builtinDef = agentDef as BuiltinAgentDefinition | undefined;
+      if (builtinDef?.disallowedTools && builtinDef.disallowedTools.length > 0) {
+        childEnv.GG_DISALLOWED_TOOLS = builtinDef.disallowedTools.join(",");
+      }
+
+      // Write parent context to scratchpad if ggDir available
+      if (ggDir) {
+        const scratchpad = new Scratchpad(ggDir, sessionId);
+        await scratchpad.writeContext({
+          task: args.task,
+          agent: args.agent ?? "worker",
+          parentModel,
+          spawnedAt: new Date().toISOString(),
+        });
+      }
+
       // Spawn child process using same binary
       const binPath = process.argv[1];
       const child = spawn(process.execPath, [binPath, ...cliArgs], {
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
+        env: childEnv,
       });
 
       // Track progress

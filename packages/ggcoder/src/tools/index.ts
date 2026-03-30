@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { ProcessManager } from "../core/process-manager.js";
 import { createReadTool } from "./read.js";
@@ -13,6 +14,7 @@ import { createTaskOutputTool } from "./task-output.js";
 import { createTaskStopTool } from "./task-stop.js";
 import { createTasksTool } from "./tasks.js";
 import { createSkillTool } from "./skill.js";
+import { createTypecheckTool } from "./typecheck.js";
 import { createEnterPlanTool } from "./enter-plan.js";
 import { createExitPlanTool } from "./exit-plan.js";
 import { localOperations, type ToolOperations } from "./operations.js";
@@ -32,6 +34,8 @@ export interface CreateToolsOptions {
   onEnterPlan?: (reason?: string) => void;
   /** Callback when the LLM exits plan mode. Returns approval result string. */
   onExitPlan?: (planPath: string) => Promise<string>;
+  /** Project-local .gg directory for scratchpad coordination. Defaults to `${cwd}/.gg`. */
+  ggDir?: string;
 }
 
 export interface CreateToolsResult {
@@ -57,10 +61,12 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
     createTaskOutputTool(processManager),
     createTaskStopTool(processManager),
     createTasksTool(cwd),
+    createTypecheckTool(cwd),
   ];
 
   if (opts?.agents && opts.agents.length > 0 && opts.provider && opts.model) {
-    tools.push(createSubAgentTool(cwd, opts.agents, opts.provider, opts.model, planModeRef));
+    const ggDir = opts.ggDir ?? path.join(cwd, ".gg");
+    tools.push(createSubAgentTool(cwd, opts.agents, opts.provider, opts.model, planModeRef, ggDir));
   }
 
   if (opts?.skills && opts.skills.length > 0) {
@@ -73,6 +79,14 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
 
   if (opts?.onExitPlan) {
     tools.push(createExitPlanTool(cwd, opts.onExitPlan));
+  }
+
+  // Filter out disallowed tools when running as a subagent with tool restrictions
+  const disallowed = process.env.GG_DISALLOWED_TOOLS;
+  if (disallowed) {
+    const blocked = new Set(disallowed.split(",").map((t) => t.trim()));
+    const filtered = tools.filter((t) => !blocked.has(t.name));
+    return { tools: filtered, processManager };
   }
 
   return { tools, processManager };
@@ -90,6 +104,7 @@ export { createTaskOutputTool } from "./task-output.js";
 export { createTaskStopTool } from "./task-stop.js";
 export { createTasksTool } from "./tasks.js";
 export { createSkillTool } from "./skill.js";
+export { createTypecheckTool } from "./typecheck.js";
 export { createEnterPlanTool } from "./enter-plan.js";
 export { createExitPlanTool } from "./exit-plan.js";
 export { ProcessManager } from "../core/process-manager.js";
