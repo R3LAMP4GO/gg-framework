@@ -682,10 +682,7 @@ export function InputArea({
             let offset = 0;
             let vlIndex = 0;
             for (let h = 0; h < hardLines.length && vlIndex <= startLine + i; h++) {
-              const wrapped = wrapLine(
-                hardLines[h],
-                contentWidth,
-              );
+              const wrapped = wrapLine(hardLines[h], contentWidth);
               for (let w = 0; w < wrapped.length && vlIndex <= startLine + i; w++) {
                 if (vlIndex === startLine + i) {
                   lineStartOffset = offset;

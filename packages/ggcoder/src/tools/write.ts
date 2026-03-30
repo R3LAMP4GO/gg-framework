@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { resolvePath, rejectSymlink } from "./path-utils.js";
 import { localOperations, type ToolOperations } from "./operations.js";
+import { checkImportsResolve, checkExportsConsumed, formatWarnings } from "./wiring-checks.js";
 
 const WriteParams = z.object({
   file_path: z.string().describe("The file path to write to"),
@@ -51,7 +52,18 @@ export function createWriteTool(
       }
       await ops.writeFile(resolved, content);
       const bytes = Buffer.byteLength(content, "utf-8");
-      return `Wrote ${bytes} bytes to ${resolved}`;
+      const base = `Wrote ${bytes} bytes to ${resolved}`;
+
+      const ext = path.extname(resolved).toLowerCase();
+      const isCodeFile = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"].includes(ext);
+      const warnings = isCodeFile ? await checkImportsResolve(content, resolved, cwd, ops) : [];
+      // Only check export consumption for genuinely new code files
+      const isNewFile = !readFiles?.has(resolved);
+      if (isNewFile && isCodeFile) {
+        warnings.push(...(await checkExportsConsumed(resolved, cwd, ops)));
+      }
+      const warningText = formatWarnings(warnings);
+      return warningText ? `${base}\n\n${warningText}` : base;
     },
   };
 }

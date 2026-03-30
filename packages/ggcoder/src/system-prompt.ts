@@ -41,6 +41,7 @@ export async function buildSystemPrompt(
       `- Check command output for errors — don't assume a clean compile means success.\n` +
       `- If the project needs to be rebuilt for changes to take effect, rebuild it.\n` +
       `- If a dev server is running and needs restarting, ask the user before killing processes.\n` +
+      `- If tool results show wiring warnings, fix them before continuing.\n` +
       `- Re-read complex edits to catch mistakes before reporting done.\n\n` +
       `### Safety\n` +
       `- **Ask before destructive actions**: deleting files/directories, force-pushing, dropping data, killing processes, or overwriting uncommitted work.\n` +

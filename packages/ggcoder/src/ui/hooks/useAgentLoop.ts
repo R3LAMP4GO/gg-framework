@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { agentLoop, type AgentEvent, type AgentTool } from "@kenkaiiii/gg-agent";
 import type { Message, Provider, ThinkingLevel, TextContent, ImageContent } from "@kenkaiiii/gg-ai";
+import { VerificationGate } from "../../core/verification-gate.js";
 
 /** Rough token estimate from message content (~4 chars per token). */
 function estimateTokens(msgs: Message[]): number {
@@ -171,6 +172,8 @@ export function useAgentLoop(
   const thinkingRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runStartRef = useRef(0);
   const toolsUsedRef = useRef<Set<string>>(new Set());
+  const editedFilesRef = useRef<Set<string>>(new Set());
+  const verificationGateRef = useRef(new VerificationGate());
   const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<ActivityPhase>("idle");
   const thinkingStartRef = useRef<number | null>(null);
@@ -342,6 +345,8 @@ export function useAgentLoop(
         thinkingVisibleRef.current = "";
         runStartRef.current = Date.now();
         toolsUsedRef.current = new Set();
+        editedFilesRef.current.clear();
+        verificationGateRef.current.reset();
         charCountRef.current = 0;
         realTokensAccumRef.current = 0;
         thinkingAccumRef.current = 0;
@@ -415,12 +420,37 @@ export function useAgentLoop(
             // and before the agent would stop, so the LLM sees user guidance
             // within the same run instead of waiting for a new one.
             getSteeringMessages: () => {
-              if (queueRef.current.length === 0) return null;
-              const batch = queueRef.current.splice(0);
-              setQueuedCount(0);
-              const merged = mergeUserContent(batch);
-              onQueuedStart?.(merged);
-              return [{ role: "user" as const, content: merged }];
+              const msgs: Message[] = [];
+
+              // Cross-file wiring nudge
+              if (editedFilesRef.current.size >= 2) {
+                const files = [...editedFilesRef.current];
+                editedFilesRef.current.clear();
+                msgs.push({
+                  role: "user" as const,
+                  content:
+                    `[System] You modified ${files.length} files this turn (${files.join(", ")}). ` +
+                    `Before moving on: verify imports resolve between these files and any new exports are consumed where needed.`,
+                });
+              } else {
+                editedFilesRef.current.clear();
+              }
+
+              if (queueRef.current.length > 0) {
+                const batch = queueRef.current.splice(0);
+                setQueuedCount(0);
+                const merged = mergeUserContent(batch);
+                onQueuedStart?.(merged);
+                msgs.push({ role: "user" as const, content: merged });
+              }
+
+              // Verification gate: block exit until verification runs after edits
+              const gateMsg = verificationGateRef.current.getSteeringMessage();
+              if (gateMsg) {
+                msgs.push({ role: "user" as const, content: gateMsg });
+              }
+
+              return msgs.length > 0 ? msgs : null;
             },
           });
 
@@ -504,6 +534,25 @@ export function useAgentLoop(
                   durationMs,
                   event.details,
                 );
+                // Track files modified by edit/write for cross-file steering
+                if (
+                  (toolName === "edit" || toolName === "write") &&
+                  !event.isError &&
+                  tc?.args?.file_path &&
+                  typeof tc.args.file_path === "string"
+                ) {
+                  editedFilesRef.current.add(tc.args.file_path);
+                  verificationGateRef.current.recordEdit(tc.args.file_path);
+                }
+                // Feed bash commands and tool results to verification gate
+                if (
+                  toolName === "bash" &&
+                  tc?.args?.command &&
+                  typeof tc.args.command === "string"
+                ) {
+                  verificationGateRef.current.recordBashCommand(tc.args.command);
+                }
+                verificationGateRef.current.recordToolResult(event.result, event.isError);
                 activeToolCallsRef.current = activeToolCallsRef.current.filter(
                   (t) => t.toolCallId !== event.toolCallId,
                 );

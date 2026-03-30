@@ -99,7 +99,11 @@ export function createSubAgentTool(
       }
 
       // Resolve model — agents can specify "haiku", "sonnet", "inherit", or a specific model ID
-      const useModel = resolveAgentModel((agentDef as BuiltinAgentDefinition | undefined)?.model, parentProvider, parentModel);
+      const useModel = resolveAgentModel(
+        (agentDef as BuiltinAgentDefinition | undefined)?.model,
+        parentProvider,
+        parentModel,
+      );
       const useProvider = parentProvider;
 
       // Build CLI args — limit turns to prevent runaway context growth

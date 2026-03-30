@@ -4,6 +4,7 @@ import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { resolvePath, rejectSymlink } from "./path-utils.js";
 import { fuzzyFindText, countOccurrences, generateDiff } from "./edit-diff.js";
 import { localOperations, type ToolOperations } from "./operations.js";
+import { checkImportsResolve, formatWarnings } from "./wiring-checks.js";
 
 const EditParams = z.object({
   file_path: z.string().describe("The file path to edit"),
@@ -77,7 +78,12 @@ export function createEditTool(
 
       const relPath = path.relative(cwd, resolved);
       const diff = generateDiff(normalized, newContent, relPath);
-      return diff;
+
+      const ext = path.extname(resolved).toLowerCase();
+      const isCodeFile = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"].includes(ext);
+      const warnings = isCodeFile ? await checkImportsResolve(newContent, resolved, cwd, ops) : [];
+      const warningText = formatWarnings(warnings);
+      return warningText ? `${diff}\n\n${warningText}` : diff;
     },
   };
 }

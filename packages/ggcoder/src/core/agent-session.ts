@@ -23,6 +23,7 @@ import { MCPClientManager, getMCPServers } from "./mcp/index.js";
 import { log } from "./logger.js";
 import { setEstimatorModel } from "./compaction/token-estimator.js";
 import { discoverAgents } from "./agents.js";
+import { VerificationGate } from "./verification-gate.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -84,6 +85,7 @@ export class AgentSession {
   /** Current leaf entry ID in the session DAG — used to chain parentIds for branching. */
   private currentLeafId: string | null = null;
 
+  private verificationGate = new VerificationGate();
   private opts: AgentSessionOptions;
 
   constructor(options: AgentSessionOptions) {
@@ -297,6 +299,8 @@ export class AgentSession {
     // revoked the token server-side before the stored expiry (e.g. after a restart).
     let creds = await this.authStorage.resolveCredentials(this.provider);
 
+    this.verificationGate.reset();
+
     const runAgentLoop = async (apiKey: string, accountId?: string) => {
       const generator = agentLoop(this.messages, {
         provider: this.provider,
@@ -310,9 +314,40 @@ export class AgentSession {
         signal: this.opts.signal,
         accountId,
         cacheRetention: "short",
+        getSteeringMessages: () => {
+          const gateMsg = this.verificationGate.getSteeringMessage();
+          if (gateMsg) {
+            return [{ role: "user" as const, content: gateMsg }];
+          }
+          return null;
+        },
       });
 
+      // Track in-flight tool calls for verification gate
+      const activeTools = new Map<string, { name: string; args: Record<string, unknown> }>();
+
       for await (const event of generator as AsyncIterable<AgentEvent>) {
+        // Feed tool events to verification gate
+        if (event.type === "tool_call_start") {
+          activeTools.set(event.toolCallId, { name: event.name, args: event.args });
+        } else if (event.type === "tool_call_end") {
+          const tc = activeTools.get(event.toolCallId);
+          if (tc) {
+            if (
+              (tc.name === "edit" || tc.name === "write") &&
+              !event.isError &&
+              tc.args.file_path &&
+              typeof tc.args.file_path === "string"
+            ) {
+              this.verificationGate.recordEdit(tc.args.file_path);
+            }
+            if (tc.name === "bash" && tc.args.command && typeof tc.args.command === "string") {
+              this.verificationGate.recordBashCommand(tc.args.command);
+            }
+            this.verificationGate.recordToolResult(event.result, event.isError);
+            activeTools.delete(event.toolCallId);
+          }
+        }
         this.eventBus.forwardAgentEvent(event);
       }
     };
