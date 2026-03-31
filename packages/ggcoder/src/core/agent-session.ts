@@ -26,6 +26,7 @@ import { discoverAgents } from "./agents.js";
 import { VerificationGate } from "./verification-gate.js";
 import { EditTransaction } from "./edit-transaction.js";
 import { Scratchpad } from "./scratchpad.js";
+import { TSLanguageService } from "./ts-language-service.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -90,6 +91,7 @@ export class AgentSession {
   private verificationGate!: VerificationGate;
   private editTransaction: EditTransaction | null = null;
   private parentContext: Record<string, unknown> | null = null;
+  private tsService: TSLanguageService | null = null;
   private opts: AgentSessionOptions;
 
   constructor(options: AgentSessionOptions) {
@@ -159,6 +161,7 @@ export class AgentSession {
       projectDir: this.cwd,
     });
     const transactionRef = { current: this.editTransaction };
+    this.tsService = new TSLanguageService(this.cwd);
     const { tools, processManager } = createTools(this.cwd, {
       agents,
       skills: this.skills,
@@ -166,6 +169,7 @@ export class AgentSession {
       model: this.model,
       transactionRef,
       ggDir: localGGDir,
+      tsService: this.tsService,
     });
     this.tools = tools;
     this.processManager = processManager;
@@ -560,6 +564,7 @@ export class AgentSession {
     await this.mcpManager?.dispose();
     await this.extensionLoader.deactivateAll();
     await this.editTransaction?.commit();
+    this.tsService?.dispose();
     this.eventBus.removeAllListeners();
     this.messages = [];
     this.tools = [];

@@ -94,13 +94,15 @@ export async function buildSystemPrompt(
   if (parentContext) {
     const task = (parentContext.task as string) || "unknown";
     const model = (parentContext.parentModel as string) || "unknown";
-    sections.push(
-      `## Parent Context\n\n` +
-        `You are a spawned sub-agent working on a larger task.\n` +
-        `Parent task: ${task}\n` +
-        `Parent model: ${model}\n\n` +
-        `Complete your sub-task using available tools, then return findings concisely.`,
-    );
+    const guidance = (parentContext.guidance as string) || "";
+    const lines = [
+      `## Parent Context\n`,
+      `You are a spawned sub-agent working on a larger task.`,
+      `Parent task: ${task}`,
+      `Parent model: ${model}`,
+    ];
+    if (guidance) lines.push(`\n${guidance}`);
+    sections.push(lines.join("\n"));
   }
 
   // 3. Code Quality
@@ -111,7 +113,14 @@ export async function buildSystemPrompt(
       `- No dead code, no commented-out code — delete what's unused.\n` +
       `- Handle errors at appropriate boundaries (I/O, user input, external APIs).\n` +
       `- Prefer existing dependencies over introducing new ones.\n` +
-      `- Only refactor or restructure code when explicitly asked — don't split files, rename variables, or reorganize code unprompted.`,
+      `- Only refactor or restructure code when explicitly asked — don't split files, rename variables, or reorganize code unprompted.\n` +
+      `- Prefer editing existing files over creating new ones — this prevents file bloat and builds on existing work.\n` +
+      `- After multi-file changes, verify imports resolve between files and new exports are consumed where needed.\n` +
+      `- Functions must be actually called, not just defined. Routes must be registered. Components must be rendered in parents. Config values must be read where used.\n` +
+      `- Never create parallel "New" prefixed functions — replace originals directly.\n` +
+      `- Don't add features, error handling, or abstractions beyond what was asked. A bug fix doesn't need surrounding code cleaned up.\n` +
+      `- If tool results show wiring warnings or type errors, fix them before continuing.\n` +
+      `- Use ts_inspect for type info: \`ts_inspect diagnostics\` for type errors, \`ts_inspect hover\` for type info at a position, \`ts_inspect definition\` for go-to-definition.`,
   );
 
   // 4. Tools

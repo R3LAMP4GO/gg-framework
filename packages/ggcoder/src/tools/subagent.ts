@@ -148,7 +148,13 @@ export function createSubAgentTool(
           task: args.task,
           agent: args.agent ?? "worker",
           parentModel,
+          parentProvider,
+          cwd,
           spawnedAt: new Date().toISOString(),
+          guidance:
+            "Read project context files (CLAUDE.md, AGENTS.md) if present. " +
+            "Use grep to find related code before making changes. " +
+            "Return findings concisely — the parent agent will integrate your work.",
         });
       }
 
