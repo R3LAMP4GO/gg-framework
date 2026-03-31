@@ -6,6 +6,7 @@ import { fuzzyFindText, countOccurrences, generateDiff } from "./edit-diff.js";
 import { localOperations, type ToolOperations } from "./operations.js";
 import { checkImportsResolve, checkMissingImports, formatWarnings } from "./wiring-checks.js";
 import type { EditTransaction } from "../core/edit-transaction.js";
+import type { TSLanguageService } from "../core/ts-language-service.js";
 
 const EditParams = z.object({
   file_path: z.string().describe("The file path to edit"),
@@ -19,6 +20,7 @@ export function createEditTool(
   ops: ToolOperations = localOperations,
   planModeRef?: { current: boolean },
   transactionRef?: { current: EditTransaction | null },
+  tsService?: TSLanguageService,
 ): AgentTool<typeof EditParams> {
   return {
     name: "edit",
@@ -98,6 +100,14 @@ export function createEditTool(
       // Check for missing imports in new_text
       const importWarnings = isCodeFile ? checkMissingImports(resolved, new_text, newContent) : [];
       if (importWarnings.length > 0) allWarnings.push(importWarnings.join("\n"));
+
+      // Inline TS diagnostics via language service
+      if (tsService && /\.tsx?$/.test(resolved)) {
+        tsService.notifyFileChanged(resolved);
+        const tsDiags = tsService.getDiagnostics(resolved);
+        const tsDiagText = tsService.formatDiagnostics(tsDiags);
+        if (tsDiagText) allWarnings.push(tsDiagText);
+      }
 
       return allWarnings.length > 0 ? `${diff}\n\n${allWarnings.join("\n")}` : diff;
     },

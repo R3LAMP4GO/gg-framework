@@ -18,10 +18,12 @@ import { createTypecheckTool } from "./typecheck.js";
 import { createEnterPlanTool } from "./enter-plan.js";
 import { createExitPlanTool } from "./exit-plan.js";
 import { createRollbackTool } from "./rollback.js";
+import { createTSInspectTool } from "./ts-inspect.js";
 import { localOperations, type ToolOperations } from "./operations.js";
 import type { AgentDefinition } from "../core/agents.js";
 import type { Skill } from "../core/skills.js";
 import type { EditTransaction } from "../core/edit-transaction.js";
+import type { TSLanguageService } from "../core/ts-language-service.js";
 
 export interface CreateToolsOptions {
   agents?: AgentDefinition[];
@@ -40,6 +42,8 @@ export interface CreateToolsOptions {
   ggDir?: string;
   /** Ref for tracking edit transactions with rollback support. */
   transactionRef?: { current: EditTransaction | null };
+  /** Persistent TypeScript language service for diagnostics/hover/definition. */
+  tsService?: TSLanguageService;
 }
 
 export interface CreateToolsResult {
@@ -53,11 +57,12 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
   const ops = opts?.operations ?? localOperations;
   const planModeRef = opts?.planModeRef;
   const transactionRef = opts?.transactionRef;
+  const tsService = opts?.tsService;
 
   const tools: AgentTool[] = [
     createReadTool(cwd, readFiles, ops),
-    createWriteTool(cwd, readFiles, ops, planModeRef, transactionRef),
-    createEditTool(cwd, readFiles, ops, planModeRef, transactionRef),
+    createWriteTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService),
+    createEditTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService),
     createBashTool(cwd, processManager, ops, planModeRef),
     createFindTool(cwd),
     createGrepTool(cwd, ops),
@@ -90,6 +95,10 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
     tools.push(createRollbackTool(cwd, transactionRef));
   }
 
+  if (tsService) {
+    tools.push(createTSInspectTool(tsService));
+  }
+
   // Filter out disallowed tools when running as a subagent with tool restrictions
   const disallowed = process.env.GG_DISALLOWED_TOOLS;
   if (disallowed) {
@@ -119,4 +128,6 @@ export { createExitPlanTool } from "./exit-plan.js";
 export { createRollbackTool } from "./rollback.js";
 export { ProcessManager } from "../core/process-manager.js";
 export { localOperations, type ToolOperations } from "./operations.js";
+export { createTSInspectTool } from "./ts-inspect.js";
 export { EditTransaction } from "../core/edit-transaction.js";
+export { TSLanguageService } from "../core/ts-language-service.js";

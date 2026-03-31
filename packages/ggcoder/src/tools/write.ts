@@ -11,6 +11,7 @@ import {
   formatWarnings,
 } from "./wiring-checks.js";
 import type { EditTransaction } from "../core/edit-transaction.js";
+import type { TSLanguageService } from "../core/ts-language-service.js";
 
 const WriteParams = z.object({
   file_path: z.string().describe("The file path to write to"),
@@ -23,6 +24,7 @@ export function createWriteTool(
   ops: ToolOperations = localOperations,
   planModeRef?: { current: boolean },
   transactionRef?: { current: EditTransaction | null },
+  tsService?: TSLanguageService,
 ): AgentTool<typeof WriteParams> {
   return {
     name: "write",
@@ -83,6 +85,14 @@ export function createWriteTool(
       // Location guard
       const locationWarning = await checkLocationGuard(cwd, resolved, ops);
       if (locationWarning) result += "\n\n" + locationWarning;
+
+      // Inline TS diagnostics via language service
+      if (tsService && /\.tsx?$/.test(resolved)) {
+        tsService.notifyFileChanged(resolved);
+        const tsDiags = tsService.getDiagnostics(resolved);
+        const tsDiagText = tsService.formatDiagnostics(tsDiags);
+        if (tsDiagText) result += "\n\n" + tsDiagText;
+      }
 
       return result;
     },
