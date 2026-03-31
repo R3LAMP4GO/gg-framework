@@ -60,6 +60,7 @@ import type { MCPClientManager } from "../core/mcp/index.js";
 import { getMCPServers } from "../core/mcp/index.js";
 import type { AuthStorage } from "../core/auth-storage.js";
 import { trimFlushedItems, flushOnTurnText, flushOnTurnEnd } from "./live-item-flush.js";
+import { Buddy } from "./buddy/Buddy.js";
 
 // ── Provider Error Hints ──────────────────────────────────
 
@@ -680,13 +681,15 @@ export function App(props: AppProps) {
 
   // ── Compaction ─────────────────────────────────────────
 
-  // Load settings for auto-compaction
+  // Load settings for auto-compaction + buddy
   const settingsRef = useRef<SettingsManager | null>(null);
+  const [buddyEnabled, setBuddyEnabled] = useState(false);
   useEffect(() => {
     if (props.settingsFile) {
       const sm = new SettingsManager(props.settingsFile);
       sm.load().then(() => {
         settingsRef.current = sm;
+        setBuddyEnabled(sm.get("buddyEnabled") ?? false);
       });
     }
   }, [props.settingsFile]);
@@ -1485,6 +1488,26 @@ export function App(props: AppProps) {
         return;
       }
 
+      // Handle /buddy — toggle companion
+      if (trimmed === "/buddy") {
+        const next = !buddyEnabled;
+        setBuddyEnabled(next);
+        if (settingsRef.current) {
+          settingsRef.current.set("buddyEnabled", next);
+        }
+        setLiveItems((items) => [
+          ...items,
+          {
+            kind: "info" as const,
+            text: next
+              ? "Buddy enabled! Your companion will appear near the prompt."
+              : "Buddy disabled.",
+            id: getId(),
+          },
+        ]);
+        return;
+      }
+
       // Handle /plans — open plan pane
       if (trimmed === "/plans") {
         stdout?.write("\x1b[2J\x1b[3J\x1b[H");
@@ -2252,18 +2275,30 @@ export function App(props: AppProps) {
               planMode={planMode}
             />
           )}
-          {bgTasks.length > 0 && (
-            <BackgroundTasksBar
-              tasks={bgTasks}
-              focused={taskBarFocused}
-              expanded={taskBarExpanded}
-              selectedIndex={selectedTaskIndex}
-              onExpand={handleTaskBarExpand}
-              onCollapse={handleTaskBarCollapse}
-              onKill={handleTaskKill}
-              onExit={handleTaskBarExit}
-              onNavigate={handleTaskNavigate}
-            />
+          {/* Buddy row — with background tasks beside it when present */}
+          {(buddyEnabled || bgTasks.length > 0) && (
+            <Box flexDirection="row">
+              {buddyEnabled && (
+                <Box flexShrink={0}>
+                  <Buddy phase={agentLoop.activityPhase} />
+                </Box>
+              )}
+              {bgTasks.length > 0 && (
+                <Box flexGrow={1}>
+                  <BackgroundTasksBar
+                    tasks={bgTasks}
+                    focused={taskBarFocused}
+                    expanded={taskBarExpanded}
+                    selectedIndex={selectedTaskIndex}
+                    onExpand={handleTaskBarExpand}
+                    onCollapse={handleTaskBarCollapse}
+                    onKill={handleTaskKill}
+                    onExit={handleTaskBarExit}
+                    onNavigate={handleTaskNavigate}
+                  />
+                </Box>
+              )}
+            </Box>
           )}
         </>
       )}

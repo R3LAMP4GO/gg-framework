@@ -89,7 +89,7 @@ export function BackgroundTasksBar({
   if (!expanded) {
     return (
       <Box paddingLeft={1} paddingRight={1}>
-        <Text color={focused ? theme.primary : theme.textMuted}>{"\u27D0 "}</Text>
+        <Text color={focused ? theme.primary : theme.textMuted}>{"● "}</Text>
         <Text color={theme.accent} bold>
           ({count})
         </Text>
@@ -111,7 +111,7 @@ export function BackgroundTasksBar({
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Box>
-        <Text color={theme.textMuted}>{"\u27D0 "}</Text>
+        <Text color={theme.textMuted}>{"● "}</Text>
         <Text color={theme.accent} bold>
           ({count})
         </Text>

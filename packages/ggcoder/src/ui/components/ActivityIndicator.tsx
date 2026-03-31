@@ -3,9 +3,14 @@ import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import type { ActivityPhase, RetryInfo } from "../hooks/useAgentLoop.js";
 
-import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
+import { SPINNER_FRAMES, SPINNER_INTERVAL, REDUCED_MOTION_DOT } from "../spinner-frames.js";
 import { PLANNING_PHRASES, selectPhrases, shuffleArray } from "../activity-phrases.js";
-import { useAnimationTick, useAnimationActive, deriveFrame } from "./AnimationContext.js";
+import {
+  useAnimationTick,
+  useAnimationActive,
+  deriveFrame,
+  useReducedMotion,
+} from "./AnimationContext.js";
 
 // ── Color pulse cycle ─────────────────────────────────────
 
@@ -139,6 +144,7 @@ export function ActivityIndicator({
   planTotal = 0,
 }: ActivityIndicatorProps) {
   const theme = useTheme();
+  const reducedMotion = useReducedMotion();
 
   // Use the global animation tick instead of a local timer.
   // This eliminates a duplicate 100ms setInterval that was causing
@@ -147,7 +153,9 @@ export function ActivityIndicator({
   const tick = useAnimationTick();
 
   // Derive all animation frames from the single tick counter
-  const spinnerFrame = deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length);
+  const spinnerFrame = reducedMotion
+    ? 0
+    : deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length);
   const pulseColors = planMode ? PLAN_PULSE_COLORS : PULSE_COLORS;
   const colorFrame = deriveFrame(tick, PULSE_INTERVAL, pulseColors.length);
   const ellipsisFrame = deriveFrame(tick, ELLIPSIS_INTERVAL, ELLIPSIS_FRAMES.length);
@@ -196,7 +204,7 @@ export function ActivityIndicator({
     return (
       <Box>
         <Text color={retryColor} bold>
-          {SPINNER_FRAMES[spinnerFrame]}{" "}
+          {reducedMotion ? REDUCED_MOTION_DOT : SPINNER_FRAMES[spinnerFrame]}{" "}
         </Text>
         <Text color={retryColor}>
           {retryLabel} — retrying ({retryInfo.attempt}/{retryInfo.maxAttempts})
@@ -214,10 +222,16 @@ export function ActivityIndicator({
   return (
     <Box>
       <Text color={spinnerColor} bold>
-        {SPINNER_FRAMES[spinnerFrame]}{" "}
+        {reducedMotion ? REDUCED_MOTION_DOT : SPINNER_FRAMES[spinnerFrame]}{" "}
       </Text>
-      <ShimmerText text={phrase} color={spinnerColor} shimmerPos={shimmerPos} />
-      <Text color={theme.textDim}>{paddedEllipsis}</Text>
+      {reducedMotion ? (
+        <Text dimColor color={spinnerColor}>
+          {phrase}
+        </Text>
+      ) : (
+        <ShimmerText text={phrase} color={spinnerColor} shimmerPos={shimmerPos} />
+      )}
+      <Text color={theme.textDim}>{reducedMotion ? "..." : paddedEllipsis}</Text>
       {meta && (
         <Text color={theme.textDim}>
           {"  ("}

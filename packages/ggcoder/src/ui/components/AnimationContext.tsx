@@ -13,7 +13,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
  * when no spinners or animations are visible.
  */
 
-const TICK_INTERVAL = 100; // ms — fast enough for the spinner (120ms frames)
+const TICK_INTERVAL = 100; // ms — fast enough for the spinner (100ms frames)
 
 const AnimationContext = createContext(0);
 const AnimationControlContext = createContext<{
@@ -86,6 +86,14 @@ export function useAnimationActive(): void {
 /** Derive a frame index from the global tick for a given interval and frame count. */
 export function deriveFrame(tick: number, intervalMs: number, frameCount: number): number {
   return Math.floor((tick * TICK_INTERVAL) / intervalMs) % frameCount;
+}
+
+/**
+ * Check if reduced-motion is requested.
+ * Respects NO_MOTION and REDUCE_MOTION env vars.
+ */
+export function useReducedMotion(): boolean {
+  return !!(process.env.NO_MOTION || process.env.REDUCE_MOTION);
 }
 
 export { TICK_INTERVAL };

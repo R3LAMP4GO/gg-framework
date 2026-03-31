@@ -9,6 +9,7 @@ import {
   plainTextLength,
   wrapPlainTextLines,
 } from "../utils/table-text.js";
+import { markdownTokenCache, containsMarkdownSyntax } from "../utils/markdown-cache.js";
 
 /**
  * Render a markdown string as Ink components.
@@ -103,6 +104,11 @@ export const Markdown = React.memo(function Markdown({
   // stabilised body has changed by a meaningful amount (100+ chars) or
   // on the final value. This reduces expensive marked.lexer calls from
   // ~30/sec to ~5-10/sec during heavy streaming.
+  //
+  // Layered caching:
+  // 1. Plain-text fast path — skip marked.lexer() entirely for text with no markdown syntax
+  // 2. LRU cache (500 entries) — avoids re-parsing completed messages on scroll
+  // 3. Streaming throttle — skip re-parse if body grew < 100 chars
   const lastParsedBodyRef = useRef("");
   const lastTokensRef = useRef<Token[]>([]);
 
@@ -110,15 +116,38 @@ export const Markdown = React.memo(function Markdown({
     const body = stabilised.body;
     const delta = body.length - lastParsedBodyRef.current.length;
 
-    // Re-parse if: first render, body shrunk (edit/reset), or grew by 100+ chars
-    if (lastTokensRef.current.length === 0 || delta < 0 || delta >= 100) {
-      lastParsedBodyRef.current = body;
-      lastTokensRef.current = marked.lexer(body);
+    // Streaming throttle: skip if delta is small and we already have tokens
+    if (lastTokensRef.current.length > 0 && delta > 0 && delta < 100) {
       return lastTokensRef.current;
     }
 
-    // Still use the latest body for the next comparison, but return cached tokens
-    return lastTokensRef.current;
+    // Check LRU cache first (mainly benefits completed messages on re-render)
+    const cached = markdownTokenCache.get(body);
+    if (cached) {
+      lastParsedBodyRef.current = body;
+      lastTokensRef.current = cached;
+      return cached;
+    }
+
+    // Plain-text fast path: skip marked.lexer() for text with no markdown syntax
+    let result: Token[];
+    if (!containsMarkdownSyntax(body)) {
+      result = [
+        {
+          type: "paragraph",
+          raw: body,
+          text: body,
+          tokens: [{ type: "text", raw: body, text: body }],
+        } as Tokens.Paragraph,
+      ];
+    } else {
+      result = marked.lexer(body);
+    }
+
+    lastParsedBodyRef.current = body;
+    lastTokensRef.current = result;
+    markdownTokenCache.set(body, result);
+    return result;
   }, [stabilised.body]);
 
   return (

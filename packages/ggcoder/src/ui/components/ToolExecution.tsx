@@ -4,6 +4,7 @@ import { useTheme } from "../theme/theme.js";
 import { Spinner } from "./Spinner.js";
 import { highlightCode, langFromPath } from "../utils/highlight.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
+import { computeWordDiff, type WordSegment } from "../utils/word-diff.js";
 
 const MAX_OUTPUT_LINES = 4; // max lines shown per tool result
 
@@ -387,6 +388,7 @@ interface NumberedDiffLine {
   type: "add" | "remove" | "context";
   lineNo: number;
   content: string;
+  wordSegments?: WordSegment[];
 }
 
 function parseDiffWithLineNumbers(result: string): NumberedDiffLine[] {
@@ -436,6 +438,18 @@ function buildDiffBody(
   const startIdx = Math.max(0, firstChangeIdx - 2);
   const endIdx = Math.min(numbered.length, lastChangeIdx + 3);
   const focused = numbered.slice(startIdx, endIdx);
+
+  // Compute word-level diffs for adjacent remove/add pairs
+  for (let i = 0; i < focused.length - 1; i++) {
+    if (focused[i].type === "remove" && focused[i + 1].type === "add") {
+      const segments = computeWordDiff(focused[i].content, focused[i + 1].content);
+      focused[i] = { ...focused[i], wordSegments: segments.filter((s) => s.type !== "added") };
+      focused[i + 1] = {
+        ...focused[i + 1],
+        wordSegments: segments.filter((s) => s.type !== "removed"),
+      };
+    }
+  }
 
   // Highlight context lines using file extension
   const filePath = String(args?.file_path ?? "");
@@ -598,20 +612,44 @@ const DiffLine = memo(function DiffLine({
   const lineNo = String(line.lineNo).padStart(padWidth, " ");
 
   if (line.type === "add") {
+    const bgColor = "#16a34a";
+    const wordHighlight = "#bbf7d0"; // brighter green for changed words
     return (
-      <Text backgroundColor="#16a34a" color="#ffffff">
+      <Text backgroundColor={bgColor} color="#ffffff">
         {lineNo}
         {"  "}
-        {line.content}
+        {line.wordSegments
+          ? line.wordSegments.map((seg, i) =>
+              seg.type === "added" ? (
+                <Text key={i} color={wordHighlight} bold>
+                  {seg.text}
+                </Text>
+              ) : (
+                <Text key={i}>{seg.text}</Text>
+              ),
+            )
+          : line.content}
       </Text>
     );
   }
   if (line.type === "remove") {
+    const bgColor = "#dc2626";
+    const wordHighlight = "#fecaca"; // brighter red for changed words
     return (
-      <Text backgroundColor="#dc2626" color="#ffffff">
+      <Text backgroundColor={bgColor} color="#ffffff">
         {lineNo}
         {"  "}
-        {line.content}
+        {line.wordSegments
+          ? line.wordSegments.map((seg, i) =>
+              seg.type === "removed" ? (
+                <Text key={i} color={wordHighlight} bold>
+                  {seg.text}
+                </Text>
+              ) : (
+                <Text key={i}>{seg.text}</Text>
+              ),
+            )
+          : line.content}
       </Text>
     );
   }
