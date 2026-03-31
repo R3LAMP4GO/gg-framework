@@ -24,6 +24,8 @@ import { log } from "./logger.js";
 import { setEstimatorModel } from "./compaction/token-estimator.js";
 import { discoverAgents } from "./agents.js";
 import { VerificationGate } from "./verification-gate.js";
+import { EditTransaction } from "./edit-transaction.js";
+import { Scratchpad } from "./scratchpad.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -85,7 +87,9 @@ export class AgentSession {
   /** Current leaf entry ID in the session DAG — used to chain parentIds for branching. */
   private currentLeafId: string | null = null;
 
-  private verificationGate = new VerificationGate();
+  private verificationGate!: VerificationGate;
+  private editTransaction: EditTransaction | null = null;
+  private parentContext: Record<string, unknown> | null = null;
   private opts: AgentSessionOptions;
 
   constructor(options: AgentSessionOptions) {
@@ -97,6 +101,7 @@ export class AgentSession {
     this.maxTokens = options.maxTokens ?? 16384;
     this.thinkingLevel = options.thinkingLevel;
     this.customSystemPrompt = options.systemPrompt;
+    this.verificationGate = new VerificationGate(options.cwd);
   }
 
   async initialize(): Promise<void> {
@@ -121,14 +126,31 @@ export class AgentSession {
     await fs.mkdir(path.join(localGGDir, "commands"), { recursive: true });
     await fs.mkdir(path.join(localGGDir, "agents"), { recursive: true });
 
+    // Phase 8: Check for orphaned snapshots from crashed sessions
+    const orphanWarning = await EditTransaction.checkOrphaned(localGGDir);
+    if (orphanWarning) {
+      log("WARN", "recovery", orphanWarning);
+    }
+
+    // Phase 8: Create edit transaction for rollback support
+    this.editTransaction = new EditTransaction(localGGDir);
+
+    // Phase 7: Read parent context if this is a subagent
+    if (process.env.GG_IS_SUBAGENT === "1" && process.env.GG_SESSION_ID) {
+      const scratchpad = new Scratchpad(localGGDir, process.env.GG_SESSION_ID);
+      this.parentContext = await scratchpad.readContext();
+    }
+
     // Discover skills
     this.skills = await discoverSkills({
       globalSkillsDir: paths.skillsDir,
       projectDir: this.cwd,
     });
 
-    // Build system prompt
-    const basePrompt = this.customSystemPrompt ?? (await buildSystemPrompt(this.cwd, this.skills));
+    // Build system prompt (Phase 7: inject parent context for subagents)
+    const basePrompt =
+      this.customSystemPrompt ??
+      (await buildSystemPrompt(this.cwd, this.skills, undefined, undefined, this.parentContext));
     this.messages = [{ role: "system", content: basePrompt }];
 
     // Discover agents and create tools (with sub-agent support)
@@ -136,11 +158,14 @@ export class AgentSession {
       globalAgentsDir: paths.agentsDir,
       projectDir: this.cwd,
     });
+    const transactionRef = { current: this.editTransaction };
     const { tools, processManager } = createTools(this.cwd, {
       agents,
       skills: this.skills,
       provider: this.provider,
       model: this.model,
+      transactionRef,
+      ggDir: localGGDir,
     });
     this.tools = tools;
     this.processManager = processManager;
@@ -314,8 +339,8 @@ export class AgentSession {
         signal: this.opts.signal,
         accountId,
         cacheRetention: "short",
-        getSteeringMessages: () => {
-          const gateMsg = this.verificationGate.getSteeringMessage();
+        getSteeringMessages: async () => {
+          const gateMsg = await this.verificationGate.getSteeringMessage();
           if (gateMsg) {
             return [{ role: "user" as const, content: gateMsg }];
           }
@@ -534,6 +559,7 @@ export class AgentSession {
     this.processManager?.shutdownAll();
     await this.mcpManager?.dispose();
     await this.extensionLoader.deactivateAll();
+    await this.editTransaction?.commit();
     this.eventBus.removeAllListeners();
     this.messages = [];
     this.tools = [];

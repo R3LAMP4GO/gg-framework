@@ -12,16 +12,25 @@
 
 export class VerificationGate {
   private editedFiles = new Set<string>();
+  private touchedFiles = new Set<string>();
   private verificationRan = false;
   private lastToolHadErrors = false;
   private nudgeSentForVerification = false;
   private nudgeSentForErrors = false;
+  private nudgeSentForDiagnostics = false;
+  private cwd: string;
+
+  constructor(cwd: string) {
+    this.cwd = cwd;
+  }
 
   /** Record a file edit/write. Resets verification state. */
   recordEdit(filePath: string): void {
     this.editedFiles.add(filePath);
+    this.touchedFiles.add(filePath);
     this.verificationRan = false;
     this.nudgeSentForVerification = false;
+    this.nudgeSentForDiagnostics = false;
   }
 
   /** Record a bash command. Detects verification patterns. */
@@ -40,7 +49,7 @@ export class VerificationGate {
    * Get a steering message if the agent should not stop yet.
    * Returns null if the agent is clear to finish.
    */
-  getSteeringMessage(): string | null {
+  async getSteeringMessage(): Promise<string | null> {
     // Check 1: tool errors/warnings not yet addressed
     if (this.lastToolHadErrors) {
       if (this.nudgeSentForErrors) {
@@ -56,7 +65,16 @@ export class VerificationGate {
       );
     }
 
-    // Check 2: files edited but no verification run
+    // Check 2: batch diagnostics on touched files
+    if (this.touchedFiles.size > 0 && !this.nudgeSentForDiagnostics) {
+      const diagMsg = await this.runBatchDiagnostics();
+      if (diagMsg) {
+        this.nudgeSentForDiagnostics = true;
+        return diagMsg;
+      }
+    }
+
+    // Check 3: files edited but no verification run
     if (this.editedFiles.size > 0 && !this.verificationRan) {
       if (this.nudgeSentForVerification) {
         // Already nudged once — allow exit
@@ -74,13 +92,44 @@ export class VerificationGate {
     return null;
   }
 
+  /** Run project diagnostics on touched files. Returns formatted message or null. */
+  private async runBatchDiagnostics(): Promise<string | null> {
+    if (this.touchedFiles.size === 0) return null;
+    try {
+      const { detectProjectTypes, runDiagnostics, formatDiagnostics } =
+        await import("../tools/diagnostics.js");
+      const projectTypes = await detectProjectTypes(this.cwd);
+      if (projectTypes.length === 0) return null;
+
+      for (const pt of projectTypes) {
+        const diagnostics = await runDiagnostics(pt);
+        // Filter to only touched files
+        const relevant = diagnostics.filter((d: { file: string }) =>
+          [...this.touchedFiles].some((f) => d.file.includes(f) || f.includes(d.file)),
+        );
+        if (relevant.length > 0) {
+          const formatted = formatDiagnostics(relevant);
+          return (
+            `[System] Project diagnostics found errors in files you modified:\n${formatted}\n` +
+            `Fix these before finishing.`
+          );
+        }
+      }
+    } catch {
+      // Diagnostics unavailable — don't block
+    }
+    return null;
+  }
+
   /** Reset all gate state. Call at the start of each run. */
   reset(): void {
     this.editedFiles.clear();
+    this.touchedFiles.clear();
     this.verificationRan = false;
     this.lastToolHadErrors = false;
     this.nudgeSentForVerification = false;
     this.nudgeSentForErrors = false;
+    this.nudgeSentForDiagnostics = false;
   }
 
   /** Whether any files have been edited this session. */

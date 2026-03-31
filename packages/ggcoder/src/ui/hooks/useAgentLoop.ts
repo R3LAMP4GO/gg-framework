@@ -173,7 +173,7 @@ export function useAgentLoop(
   const runStartRef = useRef(0);
   const toolsUsedRef = useRef<Set<string>>(new Set());
   const editedFilesRef = useRef<Set<string>>(new Set());
-  const verificationGateRef = useRef(new VerificationGate());
+  const verificationGateRef = useRef(new VerificationGate(process.cwd()));
   const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<ActivityPhase>("idle");
   const thinkingStartRef = useRef<number | null>(null);
@@ -419,7 +419,7 @@ export function useAgentLoop(
             // Drain queued messages as steering — injected between tool calls
             // and before the agent would stop, so the LLM sees user guidance
             // within the same run instead of waiting for a new one.
-            getSteeringMessages: () => {
+            getSteeringMessages: async () => {
               const msgs: Message[] = [];
 
               // Cross-file wiring nudge
@@ -445,7 +445,7 @@ export function useAgentLoop(
               }
 
               // Verification gate: block exit until verification runs after edits
-              const gateMsg = verificationGateRef.current.getSteeringMessage();
+              const gateMsg = await verificationGateRef.current.getSteeringMessage();
               if (gateMsg) {
                 msgs.push({ role: "user" as const, content: gateMsg });
               }

@@ -12,6 +12,7 @@ export async function buildSystemPrompt(
   skills?: Skill[],
   planMode?: boolean,
   approvedPlanPath?: string,
+  parentContext?: Record<string, unknown> | null,
 ): Promise<string> {
   const sections: string[] = [];
 
@@ -87,6 +88,19 @@ export async function buildSystemPrompt(
           `- If you encounter issues not covered by the plan, ask the user`,
       );
     }
+  }
+
+  // 2d. Parent context for sub-agents
+  if (parentContext) {
+    const task = (parentContext.task as string) || "unknown";
+    const model = (parentContext.parentModel as string) || "unknown";
+    sections.push(
+      `## Parent Context\n\n` +
+        `You are a spawned sub-agent working on a larger task.\n` +
+        `Parent task: ${task}\n` +
+        `Parent model: ${model}\n\n` +
+        `Complete your sub-task using available tools, then return findings concisely.`,
+    );
   }
 
   // 3. Code Quality
