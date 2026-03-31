@@ -71,26 +71,31 @@ export function createWriteTool(
         result += "\n\n💡 Tip: For surgical changes, prefer the edit tool over full rewrites.";
       }
 
-      // Wiring checks
+      // All checks in parallel (independent I/O)
       const ext = path.extname(resolved).toLowerCase();
       const isCodeFile = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"].includes(ext);
-      const warnings = isCodeFile ? await checkImportsResolve(content, resolved, cwd, ops) : [];
       const isNewFile = !readFiles?.has(resolved);
-      if (isNewFile && isCodeFile) {
-        warnings.push(...(await checkExportsConsumed(resolved, cwd, ops)));
-      }
+      const isTsFile = tsService && /\.tsx?$/.test(resolved);
+
+      if (isTsFile) tsService!.notifyFileChanged(resolved);
+
+      const [importWarnings, exportWarnings, locationWarning, tsDiags] = await Promise.all([
+        isCodeFile ? checkImportsResolve(content, resolved, cwd, ops) : Promise.resolve([]),
+        isNewFile && isCodeFile ? checkExportsConsumed(resolved, cwd, ops) : Promise.resolve([]),
+        checkLocationGuard(cwd, resolved, ops),
+        isTsFile
+          ? Promise.resolve(tsService!.getDiagnostics(resolved))
+          : Promise.resolve(
+              [] as { file: string; line: number; column: number; message: string; code: number }[],
+            ),
+      ]);
+
+      const warnings = [...importWarnings, ...exportWarnings];
       const warningText = formatWarnings(warnings);
       if (warningText) result += "\n\n" + warningText;
-
-      // Location guard
-      const locationWarning = await checkLocationGuard(cwd, resolved, ops);
       if (locationWarning) result += "\n\n" + locationWarning;
-
-      // Inline TS diagnostics via language service
-      if (tsService && /\.tsx?$/.test(resolved)) {
-        tsService.notifyFileChanged(resolved);
-        const tsDiags = tsService.getDiagnostics(resolved);
-        const tsDiagText = tsService.formatDiagnostics(tsDiags);
+      if (tsDiags.length > 0) {
+        const tsDiagText = tsService!.formatDiagnostics(tsDiags);
         if (tsDiagText) result += "\n\n" + tsDiagText;
       }
 

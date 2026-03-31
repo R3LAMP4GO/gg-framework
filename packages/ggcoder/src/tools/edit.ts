@@ -86,26 +86,31 @@ export function createEditTool(
       const relPath = path.relative(cwd, resolved);
       const diff = generateDiff(normalized, newContent, relPath);
 
-      // Collect all warnings
+      // Collect all warnings (parallel — independent checks)
       const allWarnings: string[] = [];
-
       const ext = path.extname(resolved).toLowerCase();
       const isCodeFile = [".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"].includes(ext);
-      const wiringWarnings = isCodeFile
-        ? await checkImportsResolve(newContent, resolved, cwd, ops)
-        : [];
+      const isTsFile = tsService && /\.tsx?$/.test(resolved);
+
+      if (isTsFile) tsService!.notifyFileChanged(resolved);
+
+      const [wiringWarnings, tsDiags] = await Promise.all([
+        isCodeFile ? checkImportsResolve(newContent, resolved, cwd, ops) : Promise.resolve([]),
+        isTsFile
+          ? Promise.resolve(tsService!.getDiagnostics(resolved))
+          : Promise.resolve(
+              [] as { file: string; line: number; column: number; message: string; code: number }[],
+            ),
+      ]);
+
       const wiringText = formatWarnings(wiringWarnings);
       if (wiringText) allWarnings.push(wiringText);
 
-      // Check for missing imports in new_text
       const importWarnings = isCodeFile ? checkMissingImports(resolved, new_text, newContent) : [];
       if (importWarnings.length > 0) allWarnings.push(importWarnings.join("\n"));
 
-      // Inline TS diagnostics via language service
-      if (tsService && /\.tsx?$/.test(resolved)) {
-        tsService.notifyFileChanged(resolved);
-        const tsDiags = tsService.getDiagnostics(resolved);
-        const tsDiagText = tsService.formatDiagnostics(tsDiags);
+      if (tsDiags.length > 0) {
+        const tsDiagText = tsService!.formatDiagnostics(tsDiags);
         if (tsDiagText) allWarnings.push(tsDiagText);
       }
 

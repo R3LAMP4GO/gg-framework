@@ -92,6 +92,7 @@ export class AgentSession {
   private editTransaction: EditTransaction | null = null;
   private parentContext: Record<string, unknown> | null = null;
   private tsService: TSLanguageService | null = null;
+  private cachedSystemPrompt: string | null = null;
   private opts: AgentSessionOptions;
 
   constructor(options: AgentSessionOptions) {
@@ -122,44 +123,43 @@ export class AgentSession {
     // Session manager
     this.sessionManager = new SessionManager(paths.sessionsDir);
 
-    // Ensure project-local .gg directories exist
+    // Ensure project-local .gg directories exist (parallel)
     const localGGDir = path.join(this.cwd, ".gg");
-    await fs.mkdir(path.join(localGGDir, "skills"), { recursive: true });
-    await fs.mkdir(path.join(localGGDir, "commands"), { recursive: true });
-    await fs.mkdir(path.join(localGGDir, "agents"), { recursive: true });
+    await Promise.all([
+      fs.mkdir(path.join(localGGDir, "skills"), { recursive: true }),
+      fs.mkdir(path.join(localGGDir, "commands"), { recursive: true }),
+      fs.mkdir(path.join(localGGDir, "agents"), { recursive: true }),
+    ]);
 
-    // Phase 8: Check for orphaned snapshots from crashed sessions
-    const orphanWarning = await EditTransaction.checkOrphaned(localGGDir);
+    // Phase 8: Check for orphaned snapshots + create transaction (parallel with context read)
+    const [orphanWarning] = await Promise.all([
+      EditTransaction.checkOrphaned(localGGDir),
+      (async () => {
+        // Phase 7: Read parent context if this is a subagent
+        if (process.env.GG_IS_SUBAGENT === "1" && process.env.GG_SESSION_ID) {
+          const scratchpad = new Scratchpad(localGGDir, process.env.GG_SESSION_ID);
+          this.parentContext = await scratchpad.readContext();
+        }
+      })(),
+    ]);
     if (orphanWarning) {
       log("WARN", "recovery", orphanWarning);
     }
-
-    // Phase 8: Create edit transaction for rollback support
     this.editTransaction = new EditTransaction(localGGDir);
 
-    // Phase 7: Read parent context if this is a subagent
-    if (process.env.GG_IS_SUBAGENT === "1" && process.env.GG_SESSION_ID) {
-      const scratchpad = new Scratchpad(localGGDir, process.env.GG_SESSION_ID);
-      this.parentContext = await scratchpad.readContext();
-    }
+    // Discover skills + agents in parallel (both are independent filesystem reads)
+    const [skills, agents] = await Promise.all([
+      discoverSkills({ globalSkillsDir: paths.skillsDir, projectDir: this.cwd }),
+      discoverAgents({ globalAgentsDir: paths.agentsDir, projectDir: this.cwd }),
+    ]);
+    this.skills = skills;
 
-    // Discover skills
-    this.skills = await discoverSkills({
-      globalSkillsDir: paths.skillsDir,
-      projectDir: this.cwd,
-    });
-
-    // Build system prompt (Phase 7: inject parent context for subagents)
+    // Build system prompt (needs skills + parentContext, so runs after discovery)
     const basePrompt =
       this.customSystemPrompt ??
       (await buildSystemPrompt(this.cwd, this.skills, undefined, undefined, this.parentContext));
+    this.cachedSystemPrompt = basePrompt;
     this.messages = [{ role: "system", content: basePrompt }];
-
-    // Discover agents and create tools (with sub-agent support)
-    const agents = await discoverAgents({
-      globalAgentsDir: paths.agentsDir,
-      projectDir: this.cwd,
-    });
     const transactionRef = { current: this.editTransaction };
     this.tsService = new TSLanguageService(this.cwd);
     const { tools, processManager } = createTools(this.cwd, {
@@ -478,7 +478,10 @@ export class AgentSession {
   }
 
   async newSession(): Promise<void> {
-    const basePrompt = this.customSystemPrompt ?? (await buildSystemPrompt(this.cwd, this.skills));
+    const basePrompt =
+      this.cachedSystemPrompt ??
+      this.customSystemPrompt ??
+      (await buildSystemPrompt(this.cwd, this.skills));
     this.messages = [{ role: "system", content: basePrompt }];
     await this.createNewSession();
     this.eventBus.emit("session_start", { sessionId: this.sessionId });
