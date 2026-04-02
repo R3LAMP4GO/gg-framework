@@ -646,7 +646,11 @@ export function App(props: AppProps) {
           stdout?.write("\x1b[2J\x1b[3J\x1b[H");
           setPlanAutoExpand(true);
           setOverlay("plan");
-          planOverlayPendingRef.current = false;
+          // Don't clear planOverlayPendingRef here — keep it true until
+          // the user actually approves/rejects the plan. Clearing it on a
+          // timer causes a race where agent_done fires after the 300ms
+          // timeout but before the user interacts, triggering a premature
+          // completion sound.
         }, 300);
         return (
           "Plan submitted. Exiting plan mode.\n" +
@@ -2150,12 +2154,15 @@ export function App(props: AppProps) {
           cwd={props.cwd}
           autoExpandNewest={planAutoExpand}
           onClose={() => {
+            planOverlayPendingRef.current = false;
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setStaticKey((k) => k + 1);
             setPlanAutoExpand(false);
             setOverlay(null);
           }}
           onApprove={(planPath) => {
+            // Plan overlay dismissed — allow future onDone to fire normally
+            planOverlayPendingRef.current = false;
             // Store approved plan path — will be injected into the new system prompt
             approvedPlanPathRef.current = planPath;
 
@@ -2205,6 +2212,7 @@ export function App(props: AppProps) {
             })();
           }}
           onReject={(planPath, feedback) => {
+            planOverlayPendingRef.current = false;
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setStaticKey((k) => k + 1);
             setPlanAutoExpand(false);
