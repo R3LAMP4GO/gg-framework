@@ -56,7 +56,8 @@ import { loginAnthropic } from "./core/oauth/anthropic.js";
 import { loginOpenAI } from "./core/oauth/openai.js";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./core/oauth/types.js";
 import chalk from "chalk";
-import { checkAndAutoUpdate } from "./core/auto-update.js";
+// Auto-update disabled — running local dev build via symlink.
+// import { checkAndAutoUpdate } from "./core/auto-update.js";
 
 const _require = createRequire(import.meta.url);
 const CLI_VERSION = (_require("../package.json") as { version: string }).version;
@@ -192,8 +193,9 @@ function printHelp(): void {
 }
 
 function main(): void {
-  // Silent auto-update check (throttled, non-blocking on failure)
-  const updateMessage = checkAndAutoUpdate(CLI_VERSION);
+  // Auto-update disabled — running local dev build via symlink.
+  // const updateMessage = checkAndAutoUpdate(CLI_VERSION);
+  const updateMessage: string | null = null;
   if (updateMessage) {
     console.error(chalk.hex("#60a5fa")(updateMessage));
   }
