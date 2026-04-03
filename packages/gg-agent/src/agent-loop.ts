@@ -376,6 +376,19 @@ export async function* agentLoop(
             continue;
           }
         }
+        // ── Stop hook — last chance to prevent stopping ──
+        if (options.onStop) {
+          try {
+            const stopResult = await options.onStop();
+            if (stopResult?.block && stopResult.message) {
+              messages.push({ role: "user" as const, content: stopResult.message });
+              yield { type: "steering_message" as const, content: stopResult.message };
+              continue; // Re-enter loop
+            }
+          } catch {
+            // Hook error — allow stop
+          }
+        }
         yield {
           type: "agent_done" as const,
           totalTurns: turn,
@@ -420,6 +433,29 @@ export async function* agentLoop(
         let details: unknown;
         let isError = false;
 
+        // ── PreToolUse hook ──
+        if (options.onPreToolUse) {
+          try {
+            const hookResult = await options.onPreToolUse(toolCall.name, toolCall.args);
+            if (hookResult && !hookResult.allow) {
+              resultContent = hookResult.message ?? "Tool execution blocked by hook";
+              isError = true;
+              const durationMs = Date.now() - startTime;
+              eventStream.push({
+                type: "tool_call_end" as const,
+                toolCallId: toolCall.id,
+                result: resultContent,
+                details: undefined,
+                isError,
+                durationMs,
+              });
+              return { toolCallId: toolCall.id, content: resultContent, isError };
+            }
+          } catch {
+            // Hook error — don't block tool execution
+          }
+        }
+
         const tool = toolMap.get(toolCall.name);
         if (!tool) {
           resultContent = `Unknown tool: ${toolCall.name}`;
@@ -458,6 +494,28 @@ export async function* agentLoop(
           isError,
           durationMs,
         });
+
+        // ── PostToolUse hook ──
+        if (options.onPostToolUse) {
+          try {
+            const hookResult = await options.onPostToolUse(
+              toolCall.name,
+              toolCall.args,
+              resultContent,
+              isError,
+            );
+            if (hookResult?.message) {
+              // Inject as steering message (will be picked up next iteration)
+              eventStream.push({
+                type: "tool_call_update" as const,
+                toolCallId: toolCall.id,
+                update: { hookMessage: hookResult.message },
+              });
+            }
+          } catch {
+            // Hook error — don't affect tool result
+          }
+        }
 
         return { toolCallId: toolCall.id, content: resultContent, isError };
       });

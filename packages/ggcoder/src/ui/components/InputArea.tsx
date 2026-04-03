@@ -14,6 +14,7 @@ import {
 } from "../../utils/image.js";
 import { SlashCommandMenu, filterCommands, type SlashCommandInfo } from "./SlashCommandMenu.js";
 import { log } from "../../core/logger.js";
+import { normalizeUserInput } from "../../utils/normalize-input.js";
 
 const MAX_VISIBLE_LINES = 5;
 const PROMPT = "❯ ";
@@ -104,6 +105,7 @@ interface InputAreaProps {
   onToggleTasks?: () => void;
   onToggleSkills?: () => void;
   onTogglePlanMode?: () => void;
+  onToggleExpandOutput?: () => void;
   cwd: string;
   commands?: SlashCommandInfo[];
 }
@@ -168,6 +170,7 @@ export function InputArea({
   onToggleTasks,
   onToggleSkills,
   onTogglePlanMode,
+  onToggleExpandOutput,
   cwd,
   commands = [],
 }: InputAreaProps) {
@@ -563,6 +566,12 @@ export function InputArea({
         return;
       }
 
+      // Ctrl+O toggles tool output expansion
+      if (key.ctrl && input === "o") {
+        onToggleExpandOutput?.();
+        return;
+      }
+
       if (disabled) {
         if ((key.ctrl && input === "c") || key.escape) {
           onAbort();
@@ -863,7 +872,7 @@ export function InputArea({
 
       if (input) {
         setSelectedImageIndex(null);
-        const normalized = input.replace(/\r\n?/g, "\n");
+        const normalized = normalizeUserInput(input);
 
         // If there's a selection, replace it with the typed input
         const sel = deleteSelection();

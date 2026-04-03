@@ -419,7 +419,7 @@ export function PlanOverlay({
 
         {rejectMode ? (
           <Box marginTop={1} flexDirection="column">
-            <Text color={theme.planPrimary}>{"Feedback (Enter to submit, Esc to cancel):"}</Text>
+            <Text color={theme.planPrimary}>{"Tell GG what to change (Enter to submit, Esc to cancel):"}</Text>
             <Box>
               <Text color={theme.text}>
                 {"> "}

@@ -15,16 +15,24 @@ export function PlanProgress({ steps }: PlanProgressProps) {
   if (steps.length === 0) return null;
 
   const done = steps.filter((s) => s.completed).length;
+  const skipped = steps.filter((s) => s.status === "skipped").length;
+  const revised = steps.filter((s) => s.status === "revised").length;
   const total = steps.length;
   const current = steps.find((s) => !s.completed);
 
-  // Compact progress bar
+  // Compact progress bar with per-step colors
   const barWidth = Math.min(total, 20);
-  const filledWidth = Math.round((done / total) * barWidth);
-  const bar = "\u2588".repeat(filledWidth) + "\u2591".repeat(barWidth - filledWidth);
+  const barChars: string[] = [];
+  for (let i = 0; i < barWidth; i++) {
+    const stepIdx = Math.floor((i / barWidth) * total);
+    const step = steps[stepIdx];
+    if (step?.completed) {
+      barChars.push("\u2588"); // Filled block
+    } else {
+      barChars.push("\u2591"); // Empty block
+    }
+  }
 
-  // Calculate available space for current step text
-  // "Plan " (5) + bar (barWidth) + " " (1) + "n/n" (count) + " \u2500 n. " (prefix ~6)
   const countStr = `${done}/${total}`;
   const fixedWidth = 5 + barWidth + 1 + countStr.length + 1;
   const stepPrefix = current ? `\u2500 ${current.step}. ` : "";
@@ -35,14 +43,25 @@ export function PlanProgress({ steps }: PlanProgressProps) {
     stepText = availableForText > 4 ? stepText.slice(0, availableForText - 3) + "..." : "";
   }
 
+  // Status summary for skips/revisions
+  const statusParts: string[] = [];
+  if (skipped > 0) statusParts.push(`${skipped} skipped`);
+  if (revised > 0) statusParts.push(`${revised} revised`);
+  const statusSuffix = statusParts.length > 0 ? ` (${statusParts.join(", ")})` : "";
+
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={0}>
       <Box gap={1}>
         <Text color={theme.planPrimary} bold>
           Plan
         </Text>
-        <Text color={done === total ? theme.success : theme.planPrimary}>{bar}</Text>
-        <Text color={theme.textDim}>{countStr}</Text>
+        <Text color={done === total ? theme.success : theme.planPrimary}>
+          {barChars.join("")}
+        </Text>
+        <Text color={theme.textDim}>
+          {countStr}
+          {statusSuffix}
+        </Text>
         {current && stepText && (
           <Text color={theme.textDim}>
             {stepPrefix}

@@ -27,6 +27,8 @@ import { VerificationGate } from "./verification-gate.js";
 import { EditTransaction } from "./edit-transaction.js";
 import { Scratchpad } from "./scratchpad.js";
 import { TSLanguageService } from "./ts-language-service.js";
+import { HookManager } from "./hooks/index.js";
+import { CoordinatorManager, isCoordinatorMode } from "./coordinator/index.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -73,6 +75,8 @@ export class AgentSession {
   private skills: Skill[] = [];
   private processManager?: ProcessManager;
   private mcpManager?: MCPClientManager;
+  private hookManager?: HookManager;
+  public coordinatorManager?: CoordinatorManager;
 
   private provider: Provider;
   private model: string;
@@ -174,6 +178,16 @@ export class AgentSession {
     this.tools = tools;
     this.processManager = processManager;
 
+    // Load hooks
+    this.hookManager = new HookManager();
+    await this.hookManager.loadHooks(this.settingsManager, this.cwd);
+
+    // Initialize coordinator mode if enabled
+    if (isCoordinatorMode()) {
+      this.coordinatorManager = new CoordinatorManager();
+      this.coordinatorManager.activate();
+    }
+
     // Connect MCP servers (non-blocking — failures are logged and skipped)
     this.mcpManager = new MCPClientManager();
     try {
@@ -189,6 +203,20 @@ export class AgentSession {
       const userMCP = this.settingsManager.get("mcpServers");
       const mcpTools = await this.mcpManager.connectAll(getMCPServers(this.provider, apiKey, userMCP));
       this.tools.push(...mcpTools);
+
+      // Rebuild system prompt with MCP tool metadata so the model knows about connected tools
+      if (this.mcpManager.toolMeta.length > 0 && !this.customSystemPrompt) {
+        const updatedPrompt = await buildSystemPrompt(
+          this.cwd,
+          this.skills,
+          undefined,
+          undefined,
+          this.parentContext,
+          this.mcpManager.toolMeta,
+        );
+        this.cachedSystemPrompt = updatedPrompt;
+        this.messages[0] = { role: "system", content: updatedPrompt };
+      }
     } catch (err) {
       log(
         "WARN",
@@ -354,6 +382,47 @@ export class AgentSession {
           }
           return null;
         },
+        // ── Hook callbacks ──
+        onPreToolUse: this.hookManager
+          ? async (toolName, args) => {
+              const results = await this.hookManager!.runHooks("PreToolUse", {
+                toolName,
+                toolInput: args,
+                cwd: this.cwd,
+              });
+              const blocked = results.find((r) => !r.ok || r.block);
+              if (blocked) {
+                return { allow: false, message: blocked.message ?? "Blocked by hook" };
+              }
+              return null;
+            }
+          : undefined,
+        onPostToolUse: this.hookManager
+          ? async (toolName, args, result, isError) => {
+              const results = await this.hookManager!.runHooks("PostToolUse", {
+                toolName,
+                toolInput: args,
+                toolOutput: result,
+                isError,
+                cwd: this.cwd,
+              });
+              const messages = results.filter((r) => r.message).map((r) => r.message!);
+              if (messages.length > 0) {
+                return { message: messages.join("\n") };
+              }
+              return null;
+            }
+          : undefined,
+        onStop: this.hookManager
+          ? async () => {
+              const results = await this.hookManager!.runHooks("Stop", { cwd: this.cwd });
+              const blocked = results.find((r) => r.block);
+              if (blocked) {
+                return { block: true, message: blocked.message ?? "Stop blocked by hook" };
+              }
+              return null;
+            }
+          : undefined,
       });
 
       // Track in-flight tool calls for verification gate

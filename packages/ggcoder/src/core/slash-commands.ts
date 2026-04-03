@@ -223,5 +223,20 @@ export function createBuiltinCommands(): SlashCommand[] {
         return "Goodbye!";
       },
     },
+    {
+      name: "coordinator",
+      aliases: ["coord"],
+      description: "Toggle coordinator mode (multi-agent orchestration)",
+      usage: "/coordinator",
+      execute() {
+        const current = process.env.GG_COORDINATOR_MODE;
+        if (current === "1" || current === "true") {
+          process.env.GG_COORDINATOR_MODE = "0";
+          return "Coordinator mode disabled. Restart session for full effect.";
+        }
+        process.env.GG_COORDINATOR_MODE = "1";
+        return "Coordinator mode enabled. Restart session for full effect. Or start a new session with GG_COORDINATOR_MODE=1.";
+      },
+    },
   ];
 }

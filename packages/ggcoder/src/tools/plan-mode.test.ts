@@ -278,7 +278,7 @@ describe("buildSystemPrompt with plan mode", () => {
     expect(prompt).toContain("approved.md");
     expect(prompt).toContain("# My Plan");
     expect(prompt).toContain("Do this");
-    expect(prompt).toContain("Follow the plan");
+    expect(prompt).toContain("Use the approved plan as your guide");
   });
 
   it("does not include approved plan section when no path is set", async () => {

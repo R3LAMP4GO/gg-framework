@@ -5,6 +5,7 @@
  */
 
 import type { AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
+import { normalizeUserInput } from "../utils/normalize-input.js";
 
 const TARGET_SAMPLE_RATE = 16000;
 const MODEL_ID = "Xenova/whisper-tiny.en";
@@ -123,6 +124,9 @@ export async function transcribeVoice(fileUrl: string): Promise<string> {
   const asr = await getTranscriber();
   const result = await asr(pcm);
 
-  const text = Array.isArray(result) ? result[0]?.text : (result as { text: string }).text;
-  return (text ?? "").trim();
+  const raw = Array.isArray(result) ? result[0]?.text : (result as { text: string }).text;
+  // Normalize whisper output: strip ANSI, collapse repeated whitespace, trim
+  let text = normalizeUserInput(raw ?? "");
+  text = text.replace(/\s{3,}/g, "  ").trimEnd();
+  return text;
 }

@@ -190,6 +190,33 @@ export interface AgentOptions {
    * on read.
    */
   getFollowUpMessages?: () => Promise<Message[] | null> | Message[] | null;
+
+  /**
+   * Called before each tool execution. Return { allow: false } to skip the tool
+   * and inject message as tool result. Return null to proceed normally.
+   */
+  onPreToolUse?: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ allow: boolean; message?: string } | null>;
+
+  /**
+   * Called after each tool execution. Return { message } to inject as steering.
+   * Return null for no action.
+   */
+  onPostToolUse?: (
+    toolName: string,
+    args: Record<string, unknown>,
+    result: string,
+    isError: boolean,
+  ) => Promise<{ message?: string } | null>;
+
+  /**
+   * Called when the agent would stop (no tool calls, no steering, no follow-ups).
+   * Return { block: true, message } to inject message and continue the loop.
+   * Return null or { block: false } to allow stop.
+   */
+  onStop?: () => Promise<{ block: boolean; message?: string } | null>;
 }
 
 // ── Agent Result ────────────────────────────────────────────

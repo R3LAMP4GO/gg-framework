@@ -42,6 +42,7 @@ export async function ensureAppDirs(): Promise<AppPaths> {
   await fs.mkdir(paths.extensionsDir, { recursive: true, mode: 0o700 });
   await fs.mkdir(paths.agentsDir, { recursive: true, mode: 0o700 });
   await seedDefaultAgents(paths.agentsDir);
+  await seedDefaultSkills(paths.skillsDir);
   return paths;
 }
 
@@ -104,6 +105,56 @@ Rules:
     try {
       await fs.access(filePath);
       // File exists — don't overwrite user edits
+    } catch {
+      await fs.writeFile(filePath, content, "utf-8");
+    }
+  }
+}
+
+/** Seed default skill files on first run (won't overwrite user edits). */
+async function seedDefaultSkills(skillsDir: string): Promise<void> {
+  const defaults: Record<string, string> = {
+    "defaults.md": `---
+name: Default Rules
+description: Code quality, CLI tool guidance, output style
+---
+
+## External CLIs
+
+When the project uses external services, prefer their CLI tools:
+- **Railway**: use \`railway\` CLI for deployments, logs, variables, domains
+- **Docker**: use \`docker\` / \`docker compose\` CLI for container management
+- **GitHub**: use \`gh\` CLI for PRs, issues, releases, actions
+- **Kubernetes**: use \`kubectl\` for cluster operations
+- **Vercel**: use \`vercel\` CLI for deployments and env vars
+- **Fly.io**: use \`fly\` CLI for deployments and scaling
+- When unsure which CLI to use, check availability: \`which <tool>\`
+
+## Code Quality
+
+- Don't add error handling, fallbacks, or validation for scenarios that can't happen
+- Trust internal code and framework guarantees — only validate at system boundaries (user input, external APIs)
+- Don't create helpers, utilities, or abstractions for one-time operations
+- Three similar lines of code is better than a premature abstraction
+- Don't design for hypothetical future requirements
+- Only add comments when the WHY is non-obvious — well-named identifiers explain the WHAT
+- Don't remove existing comments unless removing the code they describe
+
+## Output Style
+
+- Lead with the answer or action, not the reasoning
+- No trailing summaries — the user can read the diff
+- Only use emojis if the user explicitly requests them
+- Short and direct — if you can say it in one sentence, don't use three
+- When referencing code, include file_path:line_number format
+- When referencing GitHub issues or PRs, use owner/repo#123 format
+`,
+  };
+
+  for (const [filename, content] of Object.entries(defaults)) {
+    const filePath = path.join(skillsDir, filename);
+    try {
+      await fs.access(filePath);
     } catch {
       await fs.writeFile(filePath, content, "utf-8");
     }

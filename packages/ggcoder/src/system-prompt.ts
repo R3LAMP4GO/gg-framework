@@ -1,6 +1,24 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { formatSkillsForPrompt, type Skill } from "./core/skills.js";
+import type { MCPToolMeta } from "./core/mcp/types.js";
+import { buildMemoryPromptSection } from "./core/memory/prompt.js";
+import { buildCoordinatorPrompt, isCoordinatorMode } from "./core/coordinator/prompt.js";
+
+/** Run a command and return stdout, or empty string on failure. Truncates at maxLen. */
+function execQuiet(cmd: string, args: string[], cwd: string, maxLen = 2000): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { cwd, timeout: 5000 }, (err, stdout) => {
+      if (err || !stdout) {
+        resolve("");
+        return;
+      }
+      const trimmed = stdout.trim();
+      resolve(trimmed.length > maxLen ? trimmed.slice(0, maxLen) + "\n[...truncated]" : trimmed);
+    });
+  });
+}
 
 const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md", ".cursorrules", "CONVENTIONS.md"];
 
@@ -13,6 +31,7 @@ export async function buildSystemPrompt(
   planMode?: boolean,
   approvedPlanPath?: string,
   parentContext?: Record<string, unknown> | null,
+  mcpTools?: MCPToolMeta[],
 ): Promise<string> {
   const sections: string[] = [];
 
@@ -22,6 +41,11 @@ export async function buildSystemPrompt(
       `You explore, understand, change, and verify code — completing tasks end-to-end ` +
       `rather than just suggesting edits.`,
   );
+
+  // 1b. Coordinator mode — replaces normal workflow when active
+  if (isCoordinatorMode()) {
+    sections.push(buildCoordinatorPrompt());
+  }
 
   // 2. How to Work
   sections.push(
@@ -97,12 +121,14 @@ export async function buildSystemPrompt(
           `**Plan file:** ${approvedPlanPath}\n\n` +
           `<approved_plan>\n${planContent.trim()}\n</approved_plan>\n\n` +
           `### Rules\n` +
-          `- Follow the plan's step-by-step implementation order\n` +
-          `- Do not deviate from the plan without user confirmation\n` +
-          `- If you encounter issues not covered by the plan, ask the user\n\n` +
+          `- Use the approved plan as your guide. Follow steps in order when possible, but adapt when reality diverges.\n` +
+          `- The plan is a living guide, not a rigid script. If a step doesn't apply or needs adjustment, say so.\n` +
+          `- Before implementing, run the project's test suite to verify the baseline is passing.\n\n` +
           `### Progress Tracking\n` +
-          `After completing each step from the plan's \`## Steps\` section, output \`[DONE:n]\` ` +
-          `(e.g. \`[DONE:1]\`, \`[DONE:2]\`) in your response to mark it as complete. ` +
+          `After completing each step from the plan's \`## Steps\` section, output progress markers:\n` +
+          `- \`[DONE:n]\` — step completed as planned (e.g. \`[DONE:1]\`, \`[DONE:2]\`)\n` +
+          `- \`[SKIP:n reason]\` — step skipped with explanation (e.g. \`[SKIP:3 not needed, already exists]\`)\n` +
+          `- \`[REVISED:n new-approach]\` — step done differently (e.g. \`[REVISED:5 used existing util instead]\`)\n` +
           `The step numbers correspond to the numbered list in the \`## Steps\` section. ` +
           `This updates the progress widget shown to the user.`,
       );
@@ -143,7 +169,22 @@ export async function buildSystemPrompt(
       `- **Verify non-trivial implementations** — when using unfamiliar APIs, libraries, or complex patterns, use \`mcp__grep__searchGitHub\` to check how real codebases do it before writing or during planning. Skip this for simple edits, renames, and config changes.`,
   );
 
-  // 4. Tools
+  // 4. Tool Usage Hierarchy (CC parity — prefer dedicated tools over bash)
+  sections.push(
+    `## Tool Usage\n\n` +
+      `**Do NOT use bash when a dedicated tool exists.** Using dedicated tools produces better results and is easier to review.\n` +
+      `- Use **read** instead of \`cat\`, \`head\`, \`tail\`, or \`sed\` for viewing files\n` +
+      `- Use **edit** instead of \`sed\` or \`awk\` for modifying files\n` +
+      `- Use **write** instead of \`echo\`/heredoc/\`cat <<EOF\` for creating files\n` +
+      `- Use **grep** instead of \`grep\` or \`rg\` for searching file contents\n` +
+      `- Use **find** instead of \`find\` or \`ls -R\` for discovering files\n` +
+      `- Reserve **bash** exclusively for system commands that require shell execution (tests, builds, git, installs, dev servers)\n\n` +
+      `When given an unclear or generic instruction, interpret it in the context of software engineering and the current working directory. ` +
+      `For example, if asked to change "methodName" to snake case, find the method in the code and modify it — don't just reply with the new name.\n\n` +
+      `Do not propose changes to code you haven't read. Read files first, understand them, then modify.`,
+  );
+
+  // 4b. Tools reference
   sections.push(
     `## Tools\n\n` +
       `- **read**: Read file contents. Use offset/limit for large files.\n` +
@@ -168,6 +209,18 @@ export async function buildSystemPrompt(
       `- **enter_plan**: For complex multi-file tasks, call enter_plan to switch to plan mode for safe read-only exploration and planning.\n` +
       `- **exit_plan**: Submit your plan for user review and exit plan mode.`,
   );
+
+  // 4b. Dynamic MCP tools — injected from connected servers
+  if (mcpTools && mcpTools.length > 0) {
+    // Filter out the hardcoded grep tool (already documented above)
+    const dynamicTools = mcpTools.filter((t) => t.name !== "mcp__grep__searchGitHub");
+    if (dynamicTools.length > 0) {
+      const toolLines = dynamicTools.map(
+        (t) => `- **${t.name}**: ${t.description}`,
+      );
+      sections.push(`## MCP Tools (Connected)\n\n${toolLines.join("\n")}`);
+    }
+  }
 
   // 5. Avoid
   sections.push(
@@ -222,10 +275,42 @@ export async function buildSystemPrompt(
     }
   }
 
-  // 9. Environment (static — cacheable)
-  sections.push(
-    `## Environment\n\n` + `- Working directory: ${cwd}\n` + `- Platform: ${process.platform}`,
-  );
+  // 9. Memory system
+  try {
+    const memorySection = await buildMemoryPromptSection(cwd);
+    if (memorySection) {
+      sections.push(memorySection);
+    }
+  } catch {
+    // Memory system not available — skip silently
+  }
+
+  // 10. Environment (static — cacheable)
+  const envLines = [
+    `## Environment\n`,
+    `- Working directory: ${cwd}`,
+    `- Platform: ${process.platform}`,
+    `- Shell: ${process.env.SHELL ?? "unknown"}`,
+  ];
+  sections.push(envLines.join("\n"));
+
+  // 11. Git context (dynamic — helps model understand project state)
+  try {
+    const [gitBranch, gitStatus, gitLog] = await Promise.all([
+      execQuiet("git", ["branch", "--show-current"], cwd),
+      execQuiet("git", ["status", "--short"], cwd, 1500),
+      execQuiet("git", ["log", "--oneline", "-5"], cwd),
+    ]);
+    if (gitBranch) {
+      const gitLines = [`## Git Context\n`];
+      gitLines.push(`- Branch: ${gitBranch}`);
+      if (gitStatus) gitLines.push(`- Status:\n\`\`\`\n${gitStatus}\n\`\`\``);
+      if (gitLog) gitLines.push(`- Recent commits:\n\`\`\`\n${gitLog}\n\`\`\``);
+      sections.push(gitLines.join("\n"));
+    }
+  } catch {
+    // Not a git repo or git not available — skip
+  }
 
   // Dynamic section (uncached) — separated by marker so the transform layer
   // can split the system prompt into cached + uncached blocks.

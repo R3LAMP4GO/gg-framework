@@ -4,6 +4,38 @@ import { getAppPaths } from "../config.js";
 
 // ── Settings Schema ────────────────────────────────────────
 
+// ── Hook Schema ───────────────────────────────────────────
+const HookConfigSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("command"), command: z.string(), timeout: z.number().optional() }),
+  z.object({ type: z.literal("prompt"), prompt: z.string(), timeout: z.number().optional() }),
+  z.object({ type: z.literal("http"), url: z.string(), headers: z.record(z.string(), z.string()).optional(), timeout: z.number().optional() }),
+  z.object({ type: z.literal("agent"), prompt: z.string(), timeout: z.number().optional() }),
+]);
+
+const HookEntrySchema = z.object({
+  matcher: z.string().optional(),
+  hooks: z.array(HookConfigSchema),
+});
+
+// All 27 CC hook events
+const hookEventEntry = z.array(HookEntrySchema).optional();
+const HooksSchema = z.object({
+  PreToolUse: hookEventEntry, PostToolUse: hookEventEntry, PostToolUseFailure: hookEventEntry,
+  Stop: hookEventEntry, StopFailure: hookEventEntry,
+  SessionStart: hookEventEntry, SessionEnd: hookEventEntry, Setup: hookEventEntry,
+  SubagentStart: hookEventEntry, SubagentStop: hookEventEntry,
+  PreCompact: hookEventEntry, PostCompact: hookEventEntry,
+  UserPromptSubmit: hookEventEntry, Notification: hookEventEntry,
+  PermissionRequest: hookEventEntry, PermissionDenied: hookEventEntry,
+  TaskCreated: hookEventEntry, TaskCompleted: hookEventEntry,
+  ConfigChange: hookEventEntry, CwdChanged: hookEventEntry, FileChanged: hookEventEntry,
+  InstructionsLoaded: hookEventEntry,
+  WorktreeCreate: hookEventEntry, WorktreeRemove: hookEventEntry,
+  Elicitation: hookEventEntry, ElicitationResult: hookEventEntry,
+  TeammateIdle: hookEventEntry,
+});
+
+// ── MCP Schema ────────────────────────────────────────────
 const MCPServerSchema = z.object({
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
@@ -28,6 +60,9 @@ const SettingsSchema = z.object({
   enabledTools: z.array(z.string()).optional(),
   buddyEnabled: z.boolean().default(false),
   mcpServers: z.record(z.string(), MCPServerSchema).optional(),
+  hooks: HooksSchema.optional(),
+  autoMemoryExtraction: z.boolean().default(true),
+  sandboxEnabled: z.boolean().default(true),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -42,6 +77,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showTokenUsage: true,
   showThinking: true,
   buddyEnabled: false,
+  autoMemoryExtraction: true,
+  sandboxEnabled: true,
 };
 
 // ── Settings Manager ───────────────────────────────────────

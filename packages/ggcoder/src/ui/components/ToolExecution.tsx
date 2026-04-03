@@ -8,8 +8,15 @@ import { highlightCode, langFromPath } from "../utils/highlight.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { computeWordDiff, type WordSegment } from "../utils/word-diff.js";
 import { DASHED_H } from "../constants/figures.js";
+import { useExpandOutput } from "./ExpandOutputContext.js";
 
 const MAX_OUTPUT_LINES = 4; // max lines shown per tool result
+
+/** Get effective max lines — unlimited when Ctrl+O expansion is active. */
+function useMaxLines(): number {
+  const expanded = useExpandOutput();
+  return expanded ? Infinity : MAX_OUTPUT_LINES;
+}
 
 // ToolUseLoader minWidth={2} = 2 chars
 const HEADER_PREFIX = 2;
@@ -45,6 +52,8 @@ const COMPACT_TOOLS = new Set(["read", "grep", "find", "ls"]);
 export function ToolExecution(props: ToolExecutionProps) {
   const theme = useTheme();
   const { columns } = useTerminalSize();
+  const maxLines = useMaxLines();
+  const isExpanded = maxLines === Infinity;
 
   if (props.status === "running") {
     // Compact tools get a blinking dot + summary label
@@ -56,7 +65,7 @@ export function ToolExecution(props: ToolExecutionProps) {
           <Text color={theme.toolName} bold>
             {summary}
           </Text>
-          <Text color={theme.textDim}>{" (ctrl+o to expand)"}</Text>
+          <Text color={theme.textDim}>{isExpanded ? " (ctrl+o to collapse)" : " (ctrl+o to expand)"}</Text>
         </Box>
       );
     }
@@ -96,8 +105,8 @@ export function ToolExecution(props: ToolExecutionProps) {
 
   const { label, detail } = getToolHeaderParts(name, args);
   const body = isDiff
-    ? buildDiffBody(diffText!, args, columns)
-    : buildResultBody(name, result, isError, columns);
+    ? buildDiffBody(diffText!, args, columns, maxLines)
+    : buildResultBody(name, result, isError, columns, maxLines);
 
   const headerColor = isError ? theme.toolError : theme.toolName;
 
@@ -161,7 +170,7 @@ export function ToolExecution(props: ToolExecutionProps) {
             <Text color={theme.textDim} wrap="wrap">
               {"… +"}
               {hiddenCount}
-              {" lines (ctrl+o to expand)"}
+              {" lines (ctrl+o to collapse)"}
             </Text>
           )}
         </Box>
@@ -449,6 +458,7 @@ function buildDiffBody(
   result: string,
   args?: Record<string, unknown>,
   _columns?: number,
+  maxLines = MAX_OUTPUT_LINES,
 ): BodyContent {
   const added = (result.match(/^\+[^+]/gm) ?? []).length;
   const removed = (result.match(/^-[^-]/gm) ?? []).length;
@@ -485,7 +495,7 @@ function buildDiffBody(
   const maxLineNo = highlighted.reduce((m, l) => Math.max(m, l.lineNo), 0);
   const padWidth = String(maxLineNo).length;
 
-  const displayLines = highlighted.slice(0, MAX_OUTPUT_LINES);
+  const displayLines = highlighted.slice(0, maxLines);
   const rendered = displayLines.map((line, i) => (
     <DiffLine key={i} line={line} padWidth={padWidth} />
   ));
@@ -515,10 +525,11 @@ function buildResultBody(
   result: string,
   isError: boolean,
   columns: number,
+  maxLines = MAX_OUTPUT_LINES,
 ): BodyContent | null {
   if (isError) {
     const lines = result.split("\n");
-    const display = lines.slice(0, MAX_OUTPUT_LINES);
+    const display = lines.slice(0, maxLines);
     return {
       lines: display.map((l, i) => (
         <Text key={i} color="#f87171" wrap="wrap">
@@ -537,7 +548,7 @@ function buildResultBody(
       const exitCode = exitMatch ? exitMatch[1].trim() : "0";
       const outputLines = allLines.slice(1).filter((l) => l.length > 0);
       if (outputLines.length === 0) return null;
-      const display = outputLines.slice(0, MAX_OUTPUT_LINES);
+      const display = outputLines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => (
           <Text key={i} color={exitCode !== "0" ? "#fbbf24" : "#9ca3af"} wrap="wrap">
@@ -554,7 +565,7 @@ function buildResultBody(
     case "grep": {
       const lines = result.split("\n").filter((l) => l.length > 0);
       if (lines.length === 0 || result === "No matches found.") return null;
-      const display = lines.slice(0, MAX_OUTPUT_LINES);
+      const display = lines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => <GrepLine key={i} line={l} />),
         totalLines: lines.length,
@@ -563,7 +574,7 @@ function buildResultBody(
     case "find": {
       const lines = result.split("\n").filter((l) => l.length > 0);
       if (lines.length === 0) return null;
-      const display = lines.slice(0, MAX_OUTPUT_LINES);
+      const display = lines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => <FindLine key={i} line={l} />),
         totalLines: lines.length,
@@ -572,7 +583,7 @@ function buildResultBody(
     case "ls": {
       const lines = result.split("\n").filter((l) => l.length > 0);
       if (lines.length === 0) return null;
-      const display = lines.slice(0, MAX_OUTPUT_LINES);
+      const display = lines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => <LsLine key={i} line={l} />),
         totalLines: lines.length,
@@ -581,7 +592,7 @@ function buildResultBody(
     case "subagent": {
       const lines = result.split("\n").filter((l) => l.length > 0);
       if (lines.length === 0) return null;
-      const display = lines.slice(0, MAX_OUTPUT_LINES);
+      const display = lines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => (
           <Text key={i} color="#9ca3af" wrap="wrap">
@@ -611,7 +622,7 @@ function buildResultBody(
       // Single-line results (add, done, remove) → compact inline display
       if (lines.length <= 1) return null;
       // Multi-line = list action → show styled task list
-      const display = lines.slice(0, MAX_OUTPUT_LINES);
+      const display = lines.slice(0, maxLines);
       return {
         lines: display.map((l, i) => <TaskLine key={i} line={l} />),
         totalLines: lines.length,

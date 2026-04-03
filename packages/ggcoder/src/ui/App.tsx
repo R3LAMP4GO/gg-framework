@@ -38,6 +38,7 @@ import {
   deriveFrame,
 } from "./components/AnimationContext.js";
 import { useTerminalTitle } from "./hooks/useTerminalTitle.js";
+import { ExpandOutputProvider } from "./components/ExpandOutputContext.js";
 import { useTerminalProgress } from "./hooks/useTerminalProgress.js";
 import { getGitBranch } from "../utils/git.js";
 import { getModel, getContextWindow } from "../core/model-registry.js";
@@ -54,6 +55,8 @@ import type { Skill } from "../core/skills.js";
 import {
   extractPlanSteps,
   findCompletedMarkers,
+  findProgressMarkers,
+  applyProgressMarkers,
   markStepsCompleted,
   stripDoneMarkers,
   type PlanStep,
@@ -531,6 +534,7 @@ export function App(props: AppProps) {
   // Items from the current/last turn — rendered in the live area so they stay visible
   const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
   const [overlay, setOverlay] = useState<"model" | "tasks" | "skills" | "plan" | null>(null);
+  const [expandToolOutput, setExpandToolOutput] = useState(false);
   const [taskCount, setTaskCount] = useState(() => getTaskCount(props.cwd));
   const [runAllTasks, setRunAllTasks] = useState(false);
   const runAllTasksRef = useRef(false);
@@ -972,11 +976,11 @@ export function App(props: AppProps) {
         resolveCredentials,
       ]),
       onTurnText: useCallback((text: string, thinking: string, thinkingMs: number) => {
-        // Track [DONE:n] markers for plan step progress
+        // Track [DONE:n], [SKIP:n], [REVISED:n] markers for plan step progress
         if (planStepsRef.current.length > 0) {
-          const completed = findCompletedMarkers(text);
-          if (completed.size > 0) {
-            const updated = markStepsCompleted(planStepsRef.current, completed);
+          const markers = findProgressMarkers(text);
+          if (markers.length > 0) {
+            const updated = applyProgressMarkers(planStepsRef.current, markers);
             if (updated !== planStepsRef.current) {
               planStepsRef.current = updated;
               setPlanSteps(updated);
@@ -2182,7 +2186,7 @@ export function App(props: AppProps) {
               }),
             );
 
-            // Clear session for a fresh context focused on the plan
+            // Clear UI but PRESERVE context (don't wipe messages)
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setHistory([{ kind: "banner", id: "banner" }]);
             setLiveItems([]);
@@ -2190,31 +2194,28 @@ export function App(props: AppProps) {
             setPlanAutoExpand(false);
             setOverlay(null);
 
-            // Rebuild system prompt with the approved plan, then reset the session
+            // Rebuild system prompt with the approved plan, keeping existing messages
             void (async () => {
               const newPrompt = await buildSystemPrompt(props.cwd, props.skills, false, planPath);
-              messagesRef.current = [{ role: "system" as const, content: newPrompt }];
-              agentLoop.reset();
-              persistedIndexRef.current = messagesRef.current.length;
-
-              // Create a new session file
-              const sm = sessionManagerRef.current;
-              if (sm) {
-                const s = await sm.create(props.cwd, currentProvider, currentModel);
-                sessionPathRef.current = s.path;
+              // Replace system message but KEEP conversation history
+              // (agent remembers what it discovered during exploration)
+              if (messagesRef.current.length > 0) {
+                messagesRef.current[0] = { role: "system" as const, content: newPrompt };
+              } else {
+                messagesRef.current = [{ role: "system" as const, content: newPrompt }];
               }
 
-              // Start implementation with a clean context
+              // Start implementation with preserved context
               setLiveItems([
                 {
                   kind: "info",
-                  text: "Plan approved — starting fresh session for implementation",
+                  text: "Plan approved — implementing with preserved context",
                   id: getId(),
                 },
               ]);
               setDoneStatus(null);
               await agentLoop.run(
-                "The plan has been approved. Implement it now, following each step in order.",
+                "The plan has been approved. Implement it now. You have full context from the exploration phase.",
               );
             })();
           }}
@@ -2239,6 +2240,7 @@ export function App(props: AppProps) {
       ) : (
         <>
           {/* Content area */}
+          <ExpandOutputProvider value={expandToolOutput}>
           <Box flexDirection="column" flexGrow={1} paddingRight={1}>
             {liveItems.map((item) => renderItem(item))}
             <StreamingArea
@@ -2250,6 +2252,7 @@ export function App(props: AppProps) {
               planMode={planMode}
             />
           </Box>
+          </ExpandOutputProvider>
 
           {/* Pinned status line — always use "round" border but make it
               transparent when not thinking, so the Box height stays constant
@@ -2334,6 +2337,7 @@ export function App(props: AppProps) {
                 },
               ]);
             }}
+            onToggleExpandOutput={() => setExpandToolOutput((prev) => !prev)}
             cwd={props.cwd}
             commands={allCommands}
           />

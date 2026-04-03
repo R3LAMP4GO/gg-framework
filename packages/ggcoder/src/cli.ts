@@ -127,6 +127,7 @@ function printHelp(): void {
   // Commands
   console.log(primary("Commands:"));
   const cmds: [string, string][] = [
+    ["mcp", "Manage MCP servers (add, remove, list, get)"],
     ["login", "Log in to an AI provider (Anthropic, OpenAI)"],
     ["logout", "Log out and clear stored credentials"],
     ["sessions", "Browse and resume previous sessions"],
@@ -150,6 +151,7 @@ function printHelp(): void {
     ["--model <name>", "Model to use (e.g. claude-sonnet-4-6, gpt-4.1)"],
     ["--max-turns <n>", "Maximum agent turns per prompt"],
     ["--system-prompt <text>", "Override the system prompt"],
+    ["--coordinator", "Enable coordinator mode (multi-agent orchestration)"],
     ["--json", "JSON output mode (for sub-agents)"],
     ["--rpc", "JSON-RPC mode (for IDE integrations)"],
   ];
@@ -205,6 +207,17 @@ function main(): void {
 
   // Handle subcommands before parseArgs
   const subcommand = process.argv[2];
+
+  if (subcommand === "mcp") {
+    process.argv.splice(2, 1); // Remove "mcp" so sub-subcommand is at argv[2]
+    runMcp().catch((err) => {
+      log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
+      closeLogger();
+      process.stderr.write(formatUserError(err) + "\n");
+      process.exit(1);
+    });
+    return;
+  }
 
   if (subcommand === "login") {
     runLogin().catch((err) => {
@@ -294,6 +307,7 @@ function main(): void {
       model: { type: "string" },
       "max-turns": { type: "string" },
       "system-prompt": { type: "string" },
+      coordinator: { type: "boolean" },
     },
     allowPositionals: true,
     strict: true,
@@ -378,6 +392,11 @@ function main(): void {
 
   const model: string = savedModel ?? getHardcodedDefault(provider);
   const thinkingLevel: ThinkingLevel | undefined = savedThinkingEnabled ? "medium" : undefined;
+
+  // Coordinator mode flag
+  if (values.coordinator) {
+    process.env.GG_COORDINATOR_MODE = "1";
+  }
 
   // Interactive mode (Ink TUI)
   const cwd = process.cwd();
@@ -774,6 +793,202 @@ async function saveTelegramConfig(config: TelegramConfig): Promise<void> {
     encoding: "utf-8",
     mode: 0o600,
   });
+}
+
+// ── MCP CLI subcommands ────────────────────────────────────
+async function runMcp(): Promise<void> {
+  const paths = await ensureAppDirs();
+  initLogger(paths.logFile, { version: CLI_VERSION });
+
+  const {
+    addMcpConfig,
+    removeMcpConfig,
+    getAllMcpConfigs,
+    findServerScopes,
+    getMcpConfigsByScope,
+    MCPClientManager,
+  } = await import("./core/mcp/index.js");
+  const { ensureConfigScope, getScopeLabel, describeMcpConfigFilePath } = await import(
+    "./core/mcp/utils.js"
+  );
+
+  const sub = process.argv[2];
+
+  // ── gg mcp add <name> ──
+  if (sub === "add") {
+    const name = process.argv[3];
+    if (!name) {
+      process.stderr.write("Usage: ggcoder mcp add <name> [--url <url>] [--command <cmd>] [--scope <scope>]\n");
+      process.exit(1);
+    }
+    const args = process.argv.slice(4);
+    const opts: Record<string, string> = {};
+    for (let i = 0; i < args.length; i += 2) {
+      const key = args[i]?.replace(/^--/, "");
+      const val = args[i + 1];
+      if (key && val) opts[key] = val;
+    }
+    const scope = ensureConfigScope(opts.scope);
+    const config: Record<string, unknown> = {};
+    if (opts.url) config.url = opts.url;
+    if (opts.command) config.command = opts.command;
+    if (opts.args) config.args = opts.args.split(",");
+    if (opts.env) {
+      const envPairs: Record<string, string> = {};
+      for (const pair of opts.env.split(",")) {
+        const [k, ...v] = pair.split("=");
+        if (k) envPairs[k] = v.join("=");
+      }
+      config.env = envPairs;
+    }
+    if (opts.header) {
+      const headers: Record<string, string> = {};
+      for (const pair of opts.header.split(",")) {
+        const [k, ...v] = pair.split("=");
+        if (k) headers[k] = v.join("=");
+      }
+      config.headers = headers;
+    }
+    if (opts.timeout) config.timeout = parseInt(opts.timeout, 10);
+
+    await addMcpConfig(name, config, scope);
+    process.stdout.write(`Added MCP server "${name}" to ${getScopeLabel(scope)}\n`);
+    process.stdout.write(`File modified: ${describeMcpConfigFilePath(scope)}\n`);
+    process.exit(0);
+  }
+
+  // ── gg mcp add-json <name> '<json>' ──
+  if (sub === "add-json") {
+    const name = process.argv[3];
+    const jsonStr = process.argv[4];
+    if (!name || !jsonStr) {
+      process.stderr.write("Usage: ggcoder mcp add-json <name> '<json>' [--scope <scope>]\n");
+      process.exit(1);
+    }
+    const scopeFlag = process.argv.indexOf("--scope");
+    const scope = ensureConfigScope(scopeFlag >= 0 ? process.argv[scopeFlag + 1] : undefined);
+    const parsed = JSON.parse(jsonStr);
+    await addMcpConfig(name, parsed, scope);
+    const transportType = parsed.type ?? (parsed.command ? "stdio" : "http");
+    process.stdout.write(`Added ${transportType} MCP server "${name}" to ${getScopeLabel(scope)}\n`);
+    process.exit(0);
+  }
+
+  // ── gg mcp remove <name> ──
+  if (sub === "remove") {
+    const name = process.argv[3];
+    if (!name) {
+      process.stderr.write("Usage: ggcoder mcp remove <name> [--scope <scope>]\n");
+      process.exit(1);
+    }
+    const scopeFlag = process.argv.indexOf("--scope");
+    const explicitScope = scopeFlag >= 0 ? process.argv[scopeFlag + 1] : undefined;
+
+    if (explicitScope) {
+      const scope = ensureConfigScope(explicitScope);
+      await removeMcpConfig(name, scope);
+      process.stdout.write(`Removed MCP server "${name}" from ${getScopeLabel(scope)}\n`);
+    } else {
+      const scopes = await findServerScopes(name);
+      if (scopes.length === 0) {
+        process.stderr.write(`No MCP server found with name: "${name}"\n`);
+        process.exit(1);
+      } else if (scopes.length === 1) {
+        await removeMcpConfig(name, scopes[0]);
+        process.stdout.write(`Removed MCP server "${name}" from ${getScopeLabel(scopes[0])}\n`);
+      } else {
+        process.stderr.write(`MCP server "${name}" exists in multiple scopes:\n`);
+        for (const s of scopes) {
+          process.stderr.write(`  - ${getScopeLabel(s)} (${describeMcpConfigFilePath(s)})\n`);
+        }
+        process.stderr.write("\nTo remove from a specific scope, use:\n");
+        for (const s of scopes) {
+          process.stderr.write(`  ggcoder mcp remove "${name}" --scope ${s}\n`);
+        }
+        process.exit(1);
+      }
+    }
+    process.exit(0);
+  }
+
+  // ── gg mcp list ──
+  if (sub === "list" || !sub) {
+    const { servers } = await getAllMcpConfigs();
+    const entries = Object.entries(servers);
+    if (entries.length === 0) {
+      process.stdout.write("No MCP servers configured. Use `ggcoder mcp add` to add a server.\n");
+      process.exit(0);
+    }
+
+    process.stdout.write("Checking MCP server health...\n\n");
+    const manager = new MCPClientManager();
+    for (const [name, server] of entries) {
+      const status = await manager.checkHealth(name, server);
+      const icon = status === "connected" ? "✓" : "✗";
+      if (server.url) {
+        process.stdout.write(`${name}: ${server.url} (${server.scope}) - ${icon} ${status}\n`);
+      } else if (server.command) {
+        const cmdArgs = server.args?.join(" ") ?? "";
+        process.stdout.write(`${name}: ${server.command} ${cmdArgs} (${server.scope}) - ${icon} ${status}\n`);
+      }
+    }
+    process.exit(0);
+  }
+
+  // ── gg mcp get <name> ──
+  if (sub === "get") {
+    const name = process.argv[3];
+    if (!name) {
+      process.stderr.write("Usage: ggcoder mcp get <name>\n");
+      process.exit(1);
+    }
+    const { servers } = await getAllMcpConfigs();
+    const server = servers[name];
+    if (!server) {
+      process.stderr.write(`No MCP server found with name: "${name}"\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`${name}:\n`);
+    process.stdout.write(`  Scope: ${getScopeLabel(server.scope)}\n`);
+    const manager = new MCPClientManager();
+    const status = await manager.checkHealth(name, server);
+    process.stdout.write(`  Status: ${status === "connected" ? "✓ Connected" : "✗ " + status}\n`);
+    if (server.url) {
+      process.stdout.write(`  Type: http\n`);
+      process.stdout.write(`  URL: ${server.url}\n`);
+    } else if (server.command) {
+      process.stdout.write(`  Type: stdio\n`);
+      process.stdout.write(`  Command: ${server.command}\n`);
+      process.stdout.write(`  Args: ${server.args?.join(" ") ?? ""}\n`);
+    }
+    if (server.headers) {
+      process.stdout.write("  Headers:\n");
+      for (const [k, v] of Object.entries(server.headers)) {
+        process.stdout.write(`    ${k}: ${v}\n`);
+      }
+    }
+    if (server.env) {
+      process.stdout.write("  Environment:\n");
+      for (const [k, v] of Object.entries(server.env)) {
+        process.stdout.write(`    ${k}=${v}\n`);
+      }
+    }
+    process.stdout.write(`\nTo remove: ggcoder mcp remove "${name}" --scope ${server.scope}\n`);
+    process.exit(0);
+  }
+
+  // Unknown subcommand
+  process.stderr.write(
+    "Usage: ggcoder mcp <add|add-json|remove|list|get> [options]\n\n" +
+      "Commands:\n" +
+      "  add <name> --url <url> [--scope user|local|project]      Add HTTP server\n" +
+      "  add <name> --command <cmd> [--args a,b] [--scope ...]     Add stdio server\n" +
+      '  add-json <name> \'{"url":"..."}\' [--scope ...]             Add from JSON\n' +
+      "  remove <name> [--scope ...]                               Remove server\n" +
+      "  list                                                      List all servers\n" +
+      "  get <name>                                                Show server details\n",
+  );
+  process.exit(1);
 }
 
 async function runTelegramSetup(): Promise<void> {
