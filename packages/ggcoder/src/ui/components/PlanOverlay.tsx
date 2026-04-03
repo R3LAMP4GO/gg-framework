@@ -502,7 +502,7 @@ export function PlanOverlay({
                   {"3. "}
                 </Text>
                 <Text color={actionIndex === 2 || rejectMode ? theme.text : theme.textDim} bold={actionIndex === 2 || rejectMode}>
-                  No, keep planning
+                  Tell GG what to change
                 </Text>
                 {actionIndex === 2 && !rejectMode && (
                   <Text color={theme.textDim}>{" █"}</Text>
