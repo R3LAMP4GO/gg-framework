@@ -474,39 +474,33 @@ export function PlanOverlay({
             GG has written up a plan and is ready to execute. Would you like to proceed?
           </Text>
           <Box marginTop={1} flexDirection="column">
-            {/* Option 1 */}
+            {/* Option 1 — Yes, and bypass permissions */}
             <Box>
               <Text color={actionIndex === 0 && !rejectMode ? theme.planPrimary : theme.textDim}>
                 {actionIndex === 0 && !rejectMode ? "❯ " : "  "}
-                {"1. "}
               </Text>
               <Text color={actionIndex === 0 && !rejectMode ? theme.text : theme.textDim} bold={actionIndex === 0 && !rejectMode}>
-                Yes, and auto-accept edits
+                1. Yes, and bypass permissions
               </Text>
             </Box>
-            {/* Option 2 */}
+            {/* Option 2 — Yes, manually approve edits */}
             <Box>
               <Text color={actionIndex === 1 && !rejectMode ? theme.planPrimary : theme.textDim}>
                 {actionIndex === 1 && !rejectMode ? "❯ " : "  "}
-                {"2. "}
               </Text>
               <Text color={actionIndex === 1 && !rejectMode ? theme.text : theme.textDim} bold={actionIndex === 1 && !rejectMode}>
-                Yes, manually approve edits
+                2. Yes, manually approve edits
               </Text>
             </Box>
-            {/* Option 3 — with inline feedback */}
+            {/* Option 3 — Tell GG what to change (with inline feedback) */}
             <Box flexDirection="column">
               <Box>
                 <Text color={actionIndex === 2 && !rejectMode ? theme.planPrimary : theme.textDim}>
                   {actionIndex === 2 && !rejectMode ? "❯ " : "  "}
-                  {"3. "}
                 </Text>
                 <Text color={actionIndex === 2 || rejectMode ? theme.text : theme.textDim} bold={actionIndex === 2 || rejectMode}>
-                  Tell GG what to change
+                  3. Tell GG what to change
                 </Text>
-                {actionIndex === 2 && !rejectMode && (
-                  <Text color={theme.textDim}>{" █"}</Text>
-                )}
               </Box>
               {rejectMode && (
                 <Box marginLeft={5}>
@@ -518,18 +512,15 @@ export function PlanOverlay({
               )}
               {(actionIndex === 2 || rejectMode) && (
                 <Box marginLeft={5}>
-                  <Text dimColor>
-                    {rejectMode ? "shift+tab to approve with this feedback" : "Tab to amend"}
-                  </Text>
+                  <Text dimColor>shift+tab to approve with this feedback</Text>
                 </Box>
               )}
             </Box>
           </Box>
+          {/* Plan file path + editor hint */}
           <Box marginTop={1}>
             <Text dimColor>
-              {"Esc to cancel"}
-              {actionIndex === 2 && !rejectMode && " · Tab to amend"}
-              {rejectMode && " · shift+tab to approve with this feedback"}
+              {expandedPlan.path.replace(process.env.HOME ?? "", "~")}
             </Text>
           </Box>
         </Box>
