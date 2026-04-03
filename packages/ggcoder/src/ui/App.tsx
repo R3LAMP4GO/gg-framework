@@ -39,6 +39,7 @@ import {
 } from "./components/AnimationContext.js";
 import { useTerminalTitle } from "./hooks/useTerminalTitle.js";
 import { ExpandOutputProvider } from "./components/ExpandOutputContext.js";
+import { MCPOverlay, type MCPServerInfo } from "./components/MCPOverlay.js";
 import { useTerminalProgress } from "./hooks/useTerminalProgress.js";
 import { getGitBranch } from "../utils/git.js";
 import { getModel, getContextWindow } from "../core/model-registry.js";
@@ -54,10 +55,8 @@ import { buildSystemPrompt } from "../system-prompt.js";
 import type { Skill } from "../core/skills.js";
 import {
   extractPlanSteps,
-  findCompletedMarkers,
   findProgressMarkers,
   applyProgressMarkers,
-  markStepsCompleted,
   stripDoneMarkers,
   type PlanStep,
 } from "../utils/plan-steps.js";
@@ -533,7 +532,7 @@ export function App(props: AppProps) {
   }, [isRestoredSession, props.initialHistory]);
   // Items from the current/last turn — rendered in the live area so they stay visible
   const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
-  const [overlay, setOverlay] = useState<"model" | "tasks" | "skills" | "plan" | null>(null);
+  const [overlay, setOverlay] = useState<"model" | "tasks" | "skills" | "plan" | "mcp" | null>(null);
   const [expandToolOutput, setExpandToolOutput] = useState(false);
   const [taskCount, setTaskCount] = useState(() => getTaskCount(props.cwd));
   const [runAllTasks, setRunAllTasks] = useState(false);
@@ -1579,6 +1578,13 @@ export function App(props: AppProps) {
         return;
       }
 
+      // Handle /mcp — open MCP management overlay
+      if (trimmed === "/mcp") {
+        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+        setOverlay("mcp");
+        return;
+      }
+
       // Handle /plans — open plan pane
       if (trimmed === "/plans") {
         stdout?.write("\x1b[2J\x1b[3J\x1b[H");
@@ -2110,7 +2116,8 @@ export function App(props: AppProps) {
   const isTaskView = overlay === "tasks";
   const isSkillsView = overlay === "skills";
   const isPlanView = overlay === "plan";
-  const isOverlayView = isTaskView || isSkillsView || isPlanView;
+  const isMCPView = overlay === "mcp";
+  const isOverlayView = isTaskView || isSkillsView || isPlanView || isMCPView;
 
   return (
     <Box flexDirection="column" width={columns}>
@@ -2154,6 +2161,35 @@ export function App(props: AppProps) {
       ) : isSkillsView ? (
         <SkillsOverlay
           cwd={props.cwd}
+          onClose={() => {
+            stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+            setStaticKey((k) => k + 1);
+            setOverlay(null);
+          }}
+        />
+      ) : isMCPView ? (
+        <MCPOverlay
+          servers={(() => {
+            // Build server list from MCPClientManager
+            const mcpMgr = props.mcpManager;
+            if (!mcpMgr) return [];
+            const infos: MCPServerInfo[] = mcpMgr.toolMeta
+              .reduce((acc: MCPServerInfo[], tool) => {
+                const existing = acc.find((s) => s.name === tool.serverName);
+                if (existing) {
+                  existing.toolCount++;
+                } else {
+                  acc.push({
+                    name: tool.serverName,
+                    status: "connected",
+                    toolCount: 1,
+                    type: "unknown",
+                  });
+                }
+                return acc;
+              }, []);
+            return infos;
+          })()}
           onClose={() => {
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setStaticKey((k) => k + 1);
