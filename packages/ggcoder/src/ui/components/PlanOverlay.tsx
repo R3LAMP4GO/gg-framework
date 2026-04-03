@@ -6,6 +6,7 @@ import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { visualWidth } from "../utils/table-text.js";
 import { readdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import type { ImageAttachment } from "../../utils/image.js";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -175,6 +176,12 @@ export function PlanOverlay({
   const [rejectFeedback, setRejectFeedback] = useState("");
   const [actionIndex, setActionIndex] = useState(0);
 
+  // Image pasting in reject feedback (CC parity)
+  const [rejectImages, setRejectImages] = useState<ImageAttachment[]>([]);
+  const [imageSelectMode, setImageSelectMode] = useState(false);
+  const [selectedImageIdx, setSelectedImageIdx] = useState(0);
+  const nextImageIdRef = useRef(1);
+
   const autoExpandedRef = useRef(false);
   const nextIdRef = useRef(0);
   const getId = () => String(nextIdRef.current++);
@@ -234,6 +241,43 @@ export function PlanOverlay({
   useInput((input, key) => {
     // Reject feedback input mode
     if (rejectMode) {
+      // ── Image selection sub-mode ──
+      if (imageSelectMode) {
+        if (key.upArrow) {
+          // Exit image selection, return to text input
+          setImageSelectMode(false);
+          return;
+        }
+        if (key.leftArrow) {
+          setSelectedImageIdx((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (key.rightArrow) {
+          setSelectedImageIdx((i) => Math.min(rejectImages.length - 1, i + 1));
+          return;
+        }
+        if (key.backspace || key.delete) {
+          // Delete selected image
+          setRejectImages((prev) => prev.filter((_, i) => i !== selectedImageIdx));
+          setSelectedImageIdx((i) => Math.max(0, i - 1));
+          if (rejectImages.length <= 1) setImageSelectMode(false);
+          return;
+        }
+        if (key.escape) {
+          setImageSelectMode(false);
+          return;
+        }
+        return;
+      }
+
+      // ── Text input mode ──
+      // Down arrow enters image selection when images exist
+      if (key.downArrow && rejectImages.length > 0) {
+        setImageSelectMode(true);
+        setSelectedImageIdx(0);
+        return;
+      }
+
       // Shift+Tab = approve with feedback (CC pattern)
       if (key.shift && key.tab) {
         if (expandedPlan && rejectFeedback.trim()) {
@@ -241,23 +285,26 @@ export function PlanOverlay({
         }
         setRejectMode(false);
         setRejectFeedback("");
+        setRejectImages([]);
         return;
       }
       if (key.return) {
         if (expandedPlan) {
-          onReject?.(expandedPlan.path, rejectFeedback || "Please revise the plan.");
+          const feedback = rejectFeedback || (rejectImages.length > 0 ? "(See attached images)" : "Please revise the plan.");
+          onReject?.(expandedPlan.path, feedback);
         }
         setRejectMode(false);
         setRejectFeedback("");
+        setRejectImages([]);
         return;
       }
       if (key.escape) {
         setRejectMode(false);
         setRejectFeedback("");
+        setRejectImages([]);
         return;
       }
       if (key.tab && !key.shift) {
-        // Tab without shift = collapse feedback mode
         setRejectMode(false);
         return;
       }
@@ -265,6 +312,24 @@ export function PlanOverlay({
         setRejectFeedback((prev) => prev.slice(0, -1));
         return;
       }
+
+      // Detect image paste (multi-char input containing file path)
+      if (input && input.length > 1) {
+        const trimmed = input.trim();
+        const isImagePath = /\.(png|jpg|jpeg|gif|webp|bmp|tiff?)$/i.test(trimmed);
+        if (isImagePath) {
+          const id = nextImageIdRef.current++;
+          const ext = trimmed.split(".").pop()?.toLowerCase() ?? "png";
+          const mediaType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+          setRejectImages((prev) => [
+            ...prev,
+            { kind: "image", fileName: trimmed.split("/").pop() ?? `image-${id}`, filePath: trimmed, mediaType, data: "" },
+          ]);
+          setRejectFeedback((prev) => prev + `[Image #${id}] `);
+          return;
+        }
+      }
+
       if (input && !key.ctrl && !key.meta) {
         setRejectFeedback((prev) => prev + input);
       }
@@ -503,11 +568,35 @@ export function PlanOverlay({
                 </Text>
               </Box>
               {rejectMode && (
-                <Box marginLeft={5}>
+                <Box marginLeft={5} flexDirection="column">
                   <Text color={theme.text}>
                     {rejectFeedback || ""}
-                    {"\u258D"}
+                    {!imageSelectMode && "\u258D"}
                   </Text>
+                  {/* Image attachments */}
+                  {rejectImages.length > 0 && (
+                    <Box marginTop={0} gap={1}>
+                      {rejectImages.map((img, i) => (
+                        <Text
+                          key={i}
+                          color={imageSelectMode && i === selectedImageIdx ? theme.error : theme.accent}
+                          bold={imageSelectMode && i === selectedImageIdx}
+                          inverse={imageSelectMode && i === selectedImageIdx}
+                        >
+                          {" [Image #"}
+                          {i + 1}
+                          {"]"}
+                          {imageSelectMode && i === selectedImageIdx ? " ✕" : ""}
+                        </Text>
+                      ))}
+                      {imageSelectMode && (
+                        <Text dimColor>{" ←→ select · backspace delete · ↑ back"}</Text>
+                      )}
+                      {!imageSelectMode && rejectImages.length > 0 && (
+                        <Text dimColor>{" ↓ select images"}</Text>
+                      )}
+                    </Box>
+                  )}
                 </Box>
               )}
               {(actionIndex === 2 || rejectMode) && (
