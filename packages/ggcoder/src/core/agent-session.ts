@@ -29,6 +29,19 @@ import { Scratchpad } from "./scratchpad.js";
 import { TSLanguageService } from "./ts-language-service.js";
 import { HookManager } from "./hooks/index.js";
 import { CoordinatorManager, isCoordinatorMode } from "./coordinator/index.js";
+import {
+  runExtraction,
+  buildExtractionPrompt,
+  type ExtractState,
+} from "./memory/extract.js";
+import { getAutoMemPath } from "./memory/paths.js";
+import { scanMemoryFiles, formatMemoryManifest } from "./memory/scan.js";
+import {
+  checkConsolidationGate,
+  tryAcquireLock,
+  rollbackLock,
+  buildConsolidationPrompt,
+} from "./memory/consolidate.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -77,6 +90,7 @@ export class AgentSession {
   private mcpManager?: MCPClientManager;
   private hookManager?: HookManager;
   public coordinatorManager?: CoordinatorManager;
+  private extractState: ExtractState = { inProgress: false };
 
   private provider: Provider;
   private model: string;
@@ -224,6 +238,11 @@ export class AgentSession {
         `MCP initialization failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+
+    // Check if autoDream consolidation should run (fire-and-forget)
+    this.runConsolidationCheck().catch((err) => {
+      log("WARN", "consolidate", `Consolidation check failed: ${err}`);
+    });
 
     // Load or create session
     if (this.opts.sessionId) {
@@ -452,6 +471,13 @@ export class AgentSession {
         }
         this.eventBus.forwardAgentEvent(event);
       }
+
+      // ── Background memory extraction (fire-and-forget) ──
+      if (this.settingsManager.get("autoMemoryExtraction")) {
+        this.runBackgroundExtraction().catch((err) => {
+          log("WARN", "extractMemories", `Background extraction failed: ${err}`);
+        });
+      }
     };
 
     try {
@@ -642,6 +668,168 @@ export class AgentSession {
   /** Replace the abort signal (e.g. after cancellation). */
   setSignal(signal: AbortSignal): void {
     this.opts = { ...this.opts, signal };
+  }
+
+  /**
+   * Check consolidation gates and spawn autoDream if needed.
+   * Fire-and-forget at session start.
+   */
+  private async runConsolidationCheck(): Promise<void> {
+    const sessionsDir = path.join(
+      (await import("../config.js")).getAppPaths().sessionsDir,
+      // Sessions are stored per-cwd
+    );
+    const gate = await checkConsolidationGate(this.cwd, sessionsDir);
+    if (!gate.shouldRun) {
+      log("INFO", "consolidate", `Skipping: ${gate.reason}`);
+      return;
+    }
+
+    const memoryDir = await getAutoMemPath(this.cwd);
+    const priorMtime = await tryAcquireLock(memoryDir);
+    if (priorMtime === null) {
+      log("INFO", "consolidate", "Lock held by another process — skipping");
+      return;
+    }
+
+    log(
+      "INFO",
+      "consolidate",
+      `Firing autoDream — ${gate.hoursSince?.toFixed(1)}h since last, ${gate.sessionsSince} sessions`,
+    );
+
+    try {
+      const { spawn } = await import("node:child_process");
+      const prompt = buildConsolidationPrompt(memoryDir, sessionsDir);
+      const binPath = process.argv[1];
+      const child = spawn(
+        process.execPath,
+        [
+          binPath,
+          "--json",
+          "--provider", this.provider,
+          "--model", this.model,
+          "--max-turns", "10",
+          prompt,
+        ],
+        {
+          cwd: this.cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            GG_IS_SUBAGENT: "1",
+            GG_DISALLOWED_TOOLS: "subagent",
+            GG_MEMORY_DIR: memoryDir,
+          },
+        },
+      );
+
+      child.on("close", (code) => {
+        if (code === 0) {
+          log("INFO", "consolidate", "autoDream completed successfully");
+        } else {
+          log("WARN", "consolidate", `autoDream exited with code ${code} — rolling back lock`);
+          rollbackLock(memoryDir, priorMtime).catch(() => {});
+        }
+      });
+
+      // Safety timeout — kill after 5 minutes
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill("SIGTERM");
+          setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 3000);
+          rollbackLock(memoryDir, priorMtime).catch(() => {});
+        }
+      }, 300_000);
+    } catch (err) {
+      await rollbackLock(memoryDir, priorMtime);
+      throw err;
+    }
+  }
+
+  /**
+   * Spawn a background extraction agent to auto-save memories.
+   * Fire-and-forget — does not block the main conversation.
+   */
+  private async runBackgroundExtraction(): Promise<void> {
+    const result = await runExtraction(this.messages, this.cwd, this.extractState);
+
+    // If extraction determined there's nothing to do, just advance cursor
+    if (!result.newCursor) return;
+
+    // Check if there's actually work to do (runExtraction returns early for <2 messages, mutual exclusion, etc.)
+    const memoryDir = await getAutoMemPath(this.cwd);
+    const headers = await scanMemoryFiles(memoryDir);
+    const manifest = formatMemoryManifest(headers);
+    const newMessageCount = this.messages.filter(
+      (m) => m.role === "user" || m.role === "assistant",
+    ).length;
+    const prompt = buildExtractionPrompt(newMessageCount, manifest, memoryDir);
+
+    this.extractState.inProgress = true;
+    log("INFO", "extractMemories", `Spawning extraction agent — ${newMessageCount} messages`);
+
+    try {
+      const { spawn } = await import("node:child_process");
+      const binPath = process.argv[1];
+      const child = spawn(
+        process.execPath,
+        [
+          binPath,
+          "--json",
+          "--provider", this.provider,
+          "--model", this.model,
+          "--max-turns", "5",
+          prompt,
+        ],
+        {
+          cwd: this.cwd,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            GG_IS_SUBAGENT: "1",
+            GG_DISALLOWED_TOOLS: "subagent",
+            GG_MEMORY_DIR: memoryDir,
+          },
+        },
+      );
+
+      let output = "";
+      child.stdout?.on("data", (d: Buffer) => {
+        output += d.toString();
+      });
+
+      await new Promise<void>((resolve) => {
+        child.on("close", (code) => {
+          this.extractState.inProgress = false;
+          this.extractState.lastProcessedUuid = result.newCursor;
+
+          if (code === 0) {
+            // Count memory files written by scanning for write/edit tool uses in output
+            const writeCount = (output.match(/"name"\s*:\s*"(?:write|edit)"/g) ?? []).length;
+            if (writeCount > 0) {
+              log("INFO", "extractMemories", `Extraction complete — ${writeCount} memory operations`);
+            } else {
+              log("INFO", "extractMemories", "Extraction complete — no memories saved");
+            }
+          } else {
+            log("WARN", "extractMemories", `Extraction agent exited with code ${code}`);
+          }
+          resolve();
+        });
+
+        // Safety timeout — kill after 60s
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGTERM");
+            setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 3000);
+          }
+        }, 60_000);
+      });
+    } catch (err) {
+      this.extractState.inProgress = false;
+      throw err;
+    }
   }
 
   async dispose(): Promise<void> {
