@@ -30,6 +30,8 @@ export interface CreateToolsOptions {
   skills?: Skill[];
   provider?: string;
   model?: string;
+  /** Enable sandbox (command blocklist + protected paths). Default: true. */
+  sandboxEnabled?: boolean;
   /** Custom I/O operations for remote execution (SSH, Docker, etc.). Defaults to local filesystem. */
   operations?: ToolOperations;
   /** Ref for checking plan mode state inside tool execute functions. */
@@ -58,12 +60,13 @@ export function createTools(cwd: string, opts?: CreateToolsOptions): CreateTools
   const planModeRef = opts?.planModeRef;
   const transactionRef = opts?.transactionRef;
   const tsService = opts?.tsService;
+  const sandboxEnabled = opts?.sandboxEnabled ?? true;
 
   const tools: AgentTool[] = [
     createReadTool(cwd, readFiles, ops),
-    createWriteTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService),
-    createEditTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService),
-    createBashTool(cwd, processManager, ops, planModeRef),
+    createWriteTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService, sandboxEnabled),
+    createEditTool(cwd, readFiles, ops, planModeRef, transactionRef, tsService, sandboxEnabled),
+    createBashTool(cwd, processManager, ops, planModeRef, sandboxEnabled),
     createFindTool(cwd),
     createGrepTool(cwd, ops),
     createLsTool(cwd, ops),

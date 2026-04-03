@@ -5,6 +5,7 @@ import { killProcessTree } from "../utils/process.js";
 import { truncateTail } from "./truncate.js";
 import { writeOverflow } from "./overflow.js";
 import { localOperations, type ToolOperations } from "./operations.js";
+import { filterBashCommand } from "../core/sandbox/command-filter.js";
 
 const DEFAULT_TIMEOUT = 120_000; // 120 seconds
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10 MB — cap buffered output to prevent OOM
@@ -82,6 +83,7 @@ export function createBashTool(
   processManager: ProcessManager,
   ops: ToolOperations = localOperations,
   planModeRef?: { current: boolean },
+  sandboxEnabled = true,
 ): AgentTool<typeof BashParams> {
   return {
     name: "bash",
@@ -97,6 +99,13 @@ export function createBashTool(
     async execute({ command, timeout: timeoutMs, run_in_background }, context) {
       if (planModeRef?.current) {
         return "Error: bash is restricted in plan mode. Use read-only tools (read, grep, find, ls) to explore the codebase.";
+      }
+      // Sandbox: block dangerous commands
+      if (sandboxEnabled) {
+        const filter = filterBashCommand(command);
+        if (!filter.allowed) {
+          return `Blocked by sandbox: ${filter.reason}`;
+        }
       }
       if (run_in_background) {
         const result = await processManager.start(command, cwd);

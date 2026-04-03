@@ -12,6 +12,7 @@ import {
 } from "./wiring-checks.js";
 import type { EditTransaction } from "../core/edit-transaction.js";
 import type { TSLanguageService } from "../core/ts-language-service.js";
+import { isProtectedPath, getProtectionReason } from "../core/sandbox/protected-paths.js";
 
 const WriteParams = z.object({
   file_path: z.string().describe("The file path to write to"),
@@ -25,6 +26,7 @@ export function createWriteTool(
   planModeRef?: { current: boolean },
   transactionRef?: { current: EditTransaction | null },
   tsService?: TSLanguageService,
+  sandboxEnabled = true,
 ): AgentTool<typeof WriteParams> {
   return {
     name: "write",
@@ -35,6 +37,11 @@ export function createWriteTool(
     async execute({ file_path, content }) {
       const resolved = resolvePath(cwd, file_path);
       await rejectSymlink(resolved);
+
+      // Sandbox: block writes to protected paths
+      if (sandboxEnabled && isProtectedPath(resolved, cwd)) {
+        return `Blocked by sandbox: ${getProtectionReason(resolved, cwd)}. Path: ${file_path}`;
+      }
 
       // In plan mode, only allow writing to .gg/plans/
       if (planModeRef?.current) {

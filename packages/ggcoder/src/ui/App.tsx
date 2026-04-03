@@ -41,6 +41,8 @@ import { useTerminalTitle } from "./hooks/useTerminalTitle.js";
 import { ExpandOutputProvider } from "./components/ExpandOutputContext.js";
 import { MCPOverlay, type MCPServerInfo } from "./components/MCPOverlay.js";
 import { BackgroundTasksOverlay } from "./components/BackgroundTasksOverlay.js";
+import { CoordinatorStatus } from "./components/CoordinatorStatus.js";
+import type { CoordinatorManager } from "../core/coordinator/manager.js";
 import { useTerminalProgress } from "./hooks/useTerminalProgress.js";
 import { getGitBranch } from "../utils/git.js";
 import { getModel, getContextWindow } from "../core/model-registry.js";
@@ -486,6 +488,7 @@ export interface AppProps {
   sessionsDir?: string;
   sessionPath?: string;
   processManager?: ProcessManager;
+  coordinatorManager?: CoordinatorManager;
   settingsFile?: string;
   mcpManager?: MCPClientManager;
   authStorage?: AuthStorage;
@@ -1579,6 +1582,13 @@ export function App(props: AppProps) {
         return;
       }
 
+      // Handle /bg — open background tasks overlay
+      if (trimmed === "/bg" || trimmed === "/background") {
+        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+        setOverlay("bg-tasks");
+        return;
+      }
+
       // Handle /mcp — open MCP management overlay
       if (trimmed === "/mcp") {
         stdout?.write("\x1b[2J\x1b[3J\x1b[H");
@@ -2404,6 +2414,15 @@ export function App(props: AppProps) {
               gitBranch={gitBranch}
               thinkingEnabled={thinkingEnabled}
               planMode={planMode}
+            />
+          )}
+          {/* Coordinator status */}
+          {props.coordinatorManager?.isActive && (
+            <CoordinatorStatus
+              workerCount={props.coordinatorManager.getSummary().total}
+              runningCount={props.coordinatorManager.getSummary().running}
+              completedCount={props.coordinatorManager.getSummary().completed}
+              phase={props.coordinatorManager.phase}
             />
           )}
           {/* Buddy companion */}

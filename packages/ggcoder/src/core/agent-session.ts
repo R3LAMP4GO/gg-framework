@@ -29,6 +29,7 @@ import { Scratchpad } from "./scratchpad.js";
 import { TSLanguageService } from "./ts-language-service.js";
 import { HookManager } from "./hooks/index.js";
 import { CoordinatorManager, isCoordinatorMode } from "./coordinator/index.js";
+import { VerificationTracker, buildVerificationPrompt, parseVerdict } from "./verification-agent.js";
 import {
   runExtraction,
   buildExtractionPrompt,
@@ -91,6 +92,7 @@ export class AgentSession {
   private hookManager?: HookManager;
   public coordinatorManager?: CoordinatorManager;
   private extractState: ExtractState = { inProgress: false };
+  private verificationTracker = new VerificationTracker();
 
   private provider: Provider;
   private model: string;
@@ -188,6 +190,7 @@ export class AgentSession {
       transactionRef,
       ggDir: localGGDir,
       tsService: this.tsService,
+      sandboxEnabled: this.settingsManager.get("sandboxEnabled"),
     });
     this.tools = tools;
     this.processManager = processManager;
@@ -237,6 +240,12 @@ export class AgentSession {
         "mcp",
         `MCP initialization failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+
+    // Fire Setup + InstructionsLoaded hooks
+    if (this.hookManager) {
+      this.hookManager.runHooks("Setup", { cwd: this.cwd }).catch(() => {});
+      this.hookManager.runHooks("InstructionsLoaded", { cwd: this.cwd }).catch(() => {});
     }
 
     // Check if autoDream consolidation should run (fire-and-forget)
@@ -378,6 +387,11 @@ export class AgentSession {
 
     this.verificationGate.reset();
 
+    // Fire SessionStart hook
+    if (this.hookManager) {
+      this.hookManager.runHooks("SessionStart", { cwd: this.cwd }).catch(() => {});
+    }
+
     const runAgentLoop = async (apiKey: string, accountId?: string) => {
       const generator = agentLoop(this.messages, {
         provider: this.provider,
@@ -451,6 +465,15 @@ export class AgentSession {
         // Feed tool events to verification gate
         if (event.type === "tool_call_start") {
           activeTools.set(event.toolCallId, { name: event.name, args: event.args });
+          // Coordinator: track subagent workers
+          if (event.name === "subagent" && this.coordinatorManager?.isActive) {
+            const task = typeof event.args.task === "string" ? event.args.task : "worker task";
+            this.coordinatorManager.registerWorker(task, event.toolCallId);
+          }
+          // Fire hook: SubagentStart
+          if (event.name === "subagent" && this.hookManager) {
+            this.hookManager.runHooks("SubagentStart", { toolName: event.name, toolInput: event.args, cwd: this.cwd }).catch(() => {});
+          }
         } else if (event.type === "tool_call_end") {
           const tc = activeTools.get(event.toolCallId);
           if (tc) {
@@ -461,15 +484,45 @@ export class AgentSession {
               typeof tc.args.file_path === "string"
             ) {
               this.verificationGate.recordEdit(tc.args.file_path);
+              this.verificationTracker.trackEdit(tc.args.file_path as string);
             }
             if (tc.name === "bash" && tc.args.command && typeof tc.args.command === "string") {
               this.verificationGate.recordBashCommand(tc.args.command);
             }
             this.verificationGate.recordToolResult(event.result, event.isError);
+
+            // Coordinator: complete/fail worker
+            if (tc.name === "subagent" && this.coordinatorManager?.isActive) {
+              if (event.isError) {
+                this.coordinatorManager.failWorker(event.toolCallId, event.result);
+              } else {
+                this.coordinatorManager.completeWorker(event.toolCallId, event.result);
+              }
+            }
+            // Fire hook: SubagentStop
+            if (tc.name === "subagent" && this.hookManager) {
+              this.hookManager.runHooks("SubagentStop", { toolName: tc.name, toolOutput: event.result, isError: event.isError, cwd: this.cwd }).catch(() => {});
+            }
+            // Fire hook: FileChanged on successful write/edit
+            if ((tc.name === "edit" || tc.name === "write") && !event.isError && this.hookManager) {
+              this.hookManager.runHooks("FileChanged", { toolName: tc.name, toolInput: tc.args, cwd: this.cwd }).catch(() => {});
+            }
+
             activeTools.delete(event.toolCallId);
           }
         }
         this.eventBus.forwardAgentEvent(event);
+      }
+
+      // ── Adversarial verification (fire-and-forget after 3+ edits) ──
+      if (this.verificationTracker.shouldVerify()) {
+        const editedFiles = this.verificationTracker.getEditedFiles();
+        log("INFO", "verification", `Triggering adversarial verification — ${editedFiles.length} files edited`);
+        this.verificationTracker.reset();
+        // Verification runs as a background subagent
+        this.runBackgroundVerification(editedFiles).catch((err) => {
+          log("WARN", "verification", `Verification failed: ${err}`);
+        });
       }
 
       // ── Background memory extraction (fire-and-forget) ──
@@ -671,6 +724,34 @@ export class AgentSession {
   }
 
   /**
+   * Spawn adversarial verification agent after 3+ file edits.
+   */
+  private async runBackgroundVerification(editedFiles: string[]): Promise<void> {
+    const prompt = buildVerificationPrompt("Recent implementation changes", editedFiles);
+    const { spawn } = await import("node:child_process");
+    const binPath = process.argv[1];
+    const child = spawn(
+      process.execPath,
+      [binPath, "--json", "--provider", this.provider, "--model", this.model, "--max-turns", "10", prompt],
+      {
+        cwd: this.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GG_IS_SUBAGENT: "1", GG_DISALLOWED_TOOLS: "write,edit,subagent" },
+      },
+    );
+    let output = "";
+    child.stdout?.on("data", (d: Buffer) => { output += d.toString(); });
+    child.on("close", (code) => {
+      const verdict = parseVerdict(output);
+      log("INFO", "verification", `Verification complete: ${verdict} (exit ${code})`);
+      if (verdict === "FAIL") {
+        log("WARN", "verification", `VERIFICATION FAILED — agent found issues in edited files`);
+      }
+    });
+    setTimeout(() => { if (!child.killed) child.kill("SIGTERM"); }, 120_000);
+  }
+
+  /**
    * Check consolidation gates and spawn autoDream if needed.
    * Fire-and-forget at session start.
    */
@@ -833,6 +914,10 @@ export class AgentSession {
   }
 
   async dispose(): Promise<void> {
+    // Fire SessionEnd hook
+    if (this.hookManager) {
+      await this.hookManager.runHooks("SessionEnd", { cwd: this.cwd }).catch(() => {});
+    }
     this.processManager?.shutdownAll();
     await this.mcpManager?.dispose();
     await this.extensionLoader.deactivateAll();

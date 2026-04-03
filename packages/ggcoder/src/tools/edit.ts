@@ -7,6 +7,7 @@ import { localOperations, type ToolOperations } from "./operations.js";
 import { checkImportsResolve, checkMissingImports, formatWarnings } from "./wiring-checks.js";
 import type { EditTransaction } from "../core/edit-transaction.js";
 import type { TSLanguageService } from "../core/ts-language-service.js";
+import { isProtectedPath, getProtectionReason } from "../core/sandbox/protected-paths.js";
 
 const EditParams = z.object({
   file_path: z.string().describe("The file path to edit"),
@@ -21,6 +22,7 @@ export function createEditTool(
   planModeRef?: { current: boolean },
   transactionRef?: { current: EditTransaction | null },
   tsService?: TSLanguageService,
+  sandboxEnabled = true,
 ): AgentTool<typeof EditParams> {
   return {
     name: "edit",
@@ -34,6 +36,11 @@ export function createEditTool(
       }
       const resolved = resolvePath(cwd, file_path);
       await rejectSymlink(resolved);
+
+      // Sandbox: block edits to protected paths
+      if (sandboxEnabled && isProtectedPath(resolved, cwd)) {
+        return `Blocked by sandbox: ${getProtectionReason(resolved, cwd)}. Path: ${file_path}`;
+      }
 
       if (readFiles && !readFiles.has(resolved)) {
         throw new Error("File must be read first before editing. Use the read tool first.");
