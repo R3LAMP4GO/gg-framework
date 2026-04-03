@@ -40,6 +40,7 @@ import {
 import { useTerminalTitle } from "./hooks/useTerminalTitle.js";
 import { ExpandOutputProvider } from "./components/ExpandOutputContext.js";
 import { MCPOverlay, type MCPServerInfo } from "./components/MCPOverlay.js";
+import { BackgroundTasksOverlay } from "./components/BackgroundTasksOverlay.js";
 import { useTerminalProgress } from "./hooks/useTerminalProgress.js";
 import { getGitBranch } from "../utils/git.js";
 import { getModel, getContextWindow } from "../core/model-registry.js";
@@ -532,7 +533,7 @@ export function App(props: AppProps) {
   }, [isRestoredSession, props.initialHistory]);
   // Items from the current/last turn — rendered in the live area so they stay visible
   const [liveItems, setLiveItems] = useState<CompletedItem[]>([]);
-  const [overlay, setOverlay] = useState<"model" | "tasks" | "skills" | "plan" | "mcp" | null>(null);
+  const [overlay, setOverlay] = useState<"model" | "tasks" | "skills" | "plan" | "mcp" | "bg-tasks" | null>(null);
   const [expandToolOutput, setExpandToolOutput] = useState(false);
   const [taskCount, setTaskCount] = useState(() => getTaskCount(props.cwd));
   const [runAllTasks, setRunAllTasks] = useState(false);
@@ -2117,7 +2118,8 @@ export function App(props: AppProps) {
   const isSkillsView = overlay === "skills";
   const isPlanView = overlay === "plan";
   const isMCPView = overlay === "mcp";
-  const isOverlayView = isTaskView || isSkillsView || isPlanView || isMCPView;
+  const isBgTasksView = overlay === "bg-tasks";
+  const isOverlayView = isTaskView || isSkillsView || isPlanView || isMCPView || isBgTasksView;
 
   return (
     <Box flexDirection="column" width={columns}>
@@ -2161,6 +2163,15 @@ export function App(props: AppProps) {
       ) : isSkillsView ? (
         <SkillsOverlay
           cwd={props.cwd}
+          onClose={() => {
+            stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+            setStaticKey((k) => k + 1);
+            setOverlay(null);
+          }}
+        />
+      ) : isBgTasksView ? (
+        <BackgroundTasksOverlay
+          processManager={props.processManager!}
           onClose={() => {
             stdout?.write("\x1b[2J\x1b[3J\x1b[H");
             setStaticKey((k) => k + 1);
@@ -2374,6 +2385,11 @@ export function App(props: AppProps) {
               ]);
             }}
             onToggleExpandOutput={() => setExpandToolOutput((prev) => !prev)}
+            onUpAtTop={() => {
+              // Up arrow at top of input → open background tasks overlay
+              stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+              setOverlay("bg-tasks");
+            }}
             cwd={props.cwd}
             commands={allCommands}
           />

@@ -101,6 +101,7 @@ interface InputAreaProps {
   isAgentRunning?: boolean;
   isActive?: boolean;
   onDownAtEnd?: () => void;
+  onUpAtTop?: () => void;
   onShiftTab?: () => void;
   onToggleTasks?: () => void;
   onToggleSkills?: () => void;
@@ -166,6 +167,7 @@ export function InputArea({
   isAgentRunning = false,
   isActive = true,
   onDownAtEnd,
+  onUpAtTop,
   onShiftTab,
   onToggleTasks,
   onToggleSkills,
@@ -733,7 +735,16 @@ export function InputArea({
         }
         setSelectionAnchor(null);
         const history = historyRef.current;
-        if (history.length === 0) return;
+        if (history.length === 0) {
+          // No history — fire up-at-top callback (opens background tasks)
+          onUpAtTop?.();
+          return;
+        }
+        // Already at top of history — fire callback
+        if (historyIndexRef.current === 0) {
+          onUpAtTop?.();
+          return;
+        }
         const newIndex =
           historyIndexRef.current === -1
             ? history.length - 1
