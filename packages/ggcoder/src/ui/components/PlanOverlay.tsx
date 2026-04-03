@@ -173,6 +173,7 @@ export function PlanOverlay({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState("");
+  const [actionIndex, setActionIndex] = useState(0);
 
   const autoExpandedRef = useRef(false);
   const nextIdRef = useRef(0);
@@ -233,6 +234,15 @@ export function PlanOverlay({
   useInput((input, key) => {
     // Reject feedback input mode
     if (rejectMode) {
+      // Shift+Tab = approve with feedback (CC pattern)
+      if (key.shift && key.tab) {
+        if (expandedPlan && rejectFeedback.trim()) {
+          onApprove?.(expandedPlan.path);
+        }
+        setRejectMode(false);
+        setRejectFeedback("");
+        return;
+      }
       if (key.return) {
         if (expandedPlan) {
           onReject?.(expandedPlan.path, rejectFeedback || "Please revise the plan.");
@@ -244,6 +254,11 @@ export function PlanOverlay({
       if (key.escape) {
         setRejectMode(false);
         setRejectFeedback("");
+        return;
+      }
+      if (key.tab && !key.shift) {
+        // Tab without shift = collapse feedback mode
+        setRejectMode(false);
         return;
       }
       if (key.backspace || key.delete) {
@@ -283,26 +298,62 @@ export function PlanOverlay({
       return;
     }
 
-    // ── Expanded view actions ──
+    // ── Expanded view actions (CC-style numbered options) ──
     if (expandedPlan) {
-      if (input === "a") {
+      // Reject feedback input mode
+      if (rejectMode) {
+        // handled above
+        return;
+      }
+
+      if (key.escape) {
+        collapsePlan();
+        return;
+      }
+
+      // Number keys for quick selection
+      if (input === "1") {
         onApprove?.(expandedPlan.path);
         return;
       }
-      if (input === "r") {
+      if (input === "2") {
+        onApprove?.(expandedPlan.path);
+        return;
+      }
+      if (input === "3") {
         setRejectMode(true);
         setRejectFeedback("");
         return;
       }
-      if (input === "d") {
-        setConfirmDelete(true);
+
+      // Arrow navigation between options
+      if (key.upArrow) {
+        setActionIndex((i) => Math.max(0, i - 1));
         return;
       }
-      // q or Enter → back to list
-      if (input === "q" || key.return) {
-        collapsePlan();
+      if (key.downArrow) {
+        setActionIndex((i) => Math.min(2, i + 1));
         return;
       }
+
+      // Enter selects focused option
+      if (key.return) {
+        if (actionIndex === 0 || actionIndex === 1) {
+          onApprove?.(expandedPlan.path);
+        } else if (actionIndex === 2) {
+          setRejectMode(true);
+          setRejectFeedback("");
+        }
+        return;
+      }
+
+      // Tab on option 3 enters reject feedback mode
+      if (key.tab && actionIndex === 2) {
+        setRejectMode(true);
+        setRejectFeedback("");
+        return;
+      }
+
       return;
     }
 
@@ -417,33 +468,71 @@ export function PlanOverlay({
           </Box>
         )}
 
-        {rejectMode ? (
+        {/* CC-style numbered approval options */}
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>
+            GG has written up a plan and is ready to execute. Would you like to proceed?
+          </Text>
           <Box marginTop={1} flexDirection="column">
-            <Text color={theme.planPrimary}>{"Tell GG what to change (Enter to submit, Esc to cancel):"}</Text>
+            {/* Option 1 */}
             <Box>
-              <Text color={theme.text}>
-                {"> "}
-                {rejectFeedback}
-                {"\u258D"}
+              <Text color={actionIndex === 0 && !rejectMode ? theme.planPrimary : theme.textDim}>
+                {actionIndex === 0 && !rejectMode ? "❯ " : "  "}
+                {"1. "}
+              </Text>
+              <Text color={actionIndex === 0 && !rejectMode ? theme.text : theme.textDim} bold={actionIndex === 0 && !rejectMode}>
+                Yes, and auto-accept edits
               </Text>
             </Box>
+            {/* Option 2 */}
+            <Box>
+              <Text color={actionIndex === 1 && !rejectMode ? theme.planPrimary : theme.textDim}>
+                {actionIndex === 1 && !rejectMode ? "❯ " : "  "}
+                {"2. "}
+              </Text>
+              <Text color={actionIndex === 1 && !rejectMode ? theme.text : theme.textDim} bold={actionIndex === 1 && !rejectMode}>
+                Yes, manually approve edits
+              </Text>
+            </Box>
+            {/* Option 3 — with inline feedback */}
+            <Box flexDirection="column">
+              <Box>
+                <Text color={actionIndex === 2 && !rejectMode ? theme.planPrimary : theme.textDim}>
+                  {actionIndex === 2 && !rejectMode ? "❯ " : "  "}
+                  {"3. "}
+                </Text>
+                <Text color={actionIndex === 2 || rejectMode ? theme.text : theme.textDim} bold={actionIndex === 2 || rejectMode}>
+                  No, keep planning
+                </Text>
+                {actionIndex === 2 && !rejectMode && (
+                  <Text color={theme.textDim}>{" █"}</Text>
+                )}
+              </Box>
+              {rejectMode && (
+                <Box marginLeft={5}>
+                  <Text color={theme.text}>
+                    {rejectFeedback || ""}
+                    {"\u258D"}
+                  </Text>
+                </Box>
+              )}
+              {(actionIndex === 2 || rejectMode) && (
+                <Box marginLeft={5}>
+                  <Text dimColor>
+                    {rejectMode ? "shift+tab to approve with this feedback" : "Tab to amend"}
+                  </Text>
+                </Box>
+              )}
+            </Box>
           </Box>
-        ) : (
           <Box marginTop={1}>
-            <Text color={theme.textDim}>
-              <Text color={theme.success}>a</Text>
-              {" approve · "}
-              <Text color={theme.error}>r</Text>
-              {" reject · "}
-              <Text color={theme.planPrimary}>d</Text>
-              {" delete · "}
-              <Text color={theme.planPrimary}>q</Text>
-              {" back · "}
-              <Text color={theme.planPrimary}>ESC</Text>
-              {" close"}
+            <Text dimColor>
+              {"Esc to cancel"}
+              {actionIndex === 2 && !rejectMode && " · Tab to amend"}
+              {rejectMode && " · shift+tab to approve with this feedback"}
             </Text>
           </Box>
-        )}
+        </Box>
       </Box>
     );
   }
