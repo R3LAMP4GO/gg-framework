@@ -1,16 +1,34 @@
 import type { Provider } from "@kenkaiiii/gg-ai";
 import type { MCPServerConfig } from "./types.js";
+import type { Settings } from "../settings-manager.js";
 
 export const DEFAULT_MCP_SERVERS: MCPServerConfig[] = [
   { name: "grep", url: "https://mcp.grep.app" },
 ];
 
 /**
- * Get MCP servers for a specific provider.
+ * Convert user-configured mcpServers (keyed by name) from settings.json
+ * into MCPServerConfig[] for the client manager.
+ */
+function parseUserMCPServers(
+  mcpServers?: Settings["mcpServers"],
+): MCPServerConfig[] {
+  if (!mcpServers) return [];
+  return Object.entries(mcpServers)
+    .filter(([, config]) => config.enabled !== false)
+    .map(([name, config]) => ({ name, ...config }));
+}
+
+/**
+ * Get MCP servers for a specific provider, merged with user-configured servers.
  * GLM models get Z.AI MCP servers for vision, web search, web reading, and GitHub exploration.
  */
-export function getMCPServers(provider: Provider, apiKey?: string): MCPServerConfig[] {
-  const servers = [...DEFAULT_MCP_SERVERS];
+export function getMCPServers(
+  provider: Provider,
+  apiKey?: string,
+  userMCPServers?: Settings["mcpServers"],
+): MCPServerConfig[] {
+  const servers = [...DEFAULT_MCP_SERVERS, ...parseUserMCPServers(userMCPServers)];
 
   if (provider === "glm" && apiKey) {
     const zaiAuth = { Authorization: `Bearer ${apiKey}` };

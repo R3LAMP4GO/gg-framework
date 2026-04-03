@@ -1813,8 +1813,15 @@ export function App(props: AppProps) {
               apiKey = props.credentialsByProvider?.["glm"]?.accessToken;
             }
             try {
+              // Load user-configured MCP servers from settings
+              let userMCP: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; timeout?: number; enabled?: boolean }> | undefined;
+              if (props.settingsFile) {
+                const sm = new SettingsManager(props.settingsFile);
+                const settings = await sm.load();
+                userMCP = settings.mcpServers;
+              }
               const mcpTools = await props.mcpManager!.connectAll(
-                getMCPServers(newProvider, apiKey),
+                getMCPServers(newProvider, apiKey, userMCP),
               );
               setCurrentTools((prev) => [
                 ...prev.filter((t) => !t.name.startsWith("mcp__")),

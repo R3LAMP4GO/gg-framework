@@ -4,6 +4,16 @@ import { getAppPaths } from "../config.js";
 
 // ── Settings Schema ────────────────────────────────────────
 
+const MCPServerSchema = z.object({
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  url: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  timeout: z.number().optional(),
+  enabled: z.boolean().optional(),
+});
+
 const SettingsSchema = z.object({
   autoCompact: z.boolean().default(true),
   compactThreshold: z.number().min(0.1).max(1.0).default(0.8),
@@ -17,6 +27,7 @@ const SettingsSchema = z.object({
   showThinking: z.boolean().default(true),
   enabledTools: z.array(z.string()).optional(),
   buddyEnabled: z.boolean().default(false),
+  mcpServers: z.record(z.string(), MCPServerSchema).optional(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

@@ -354,6 +354,7 @@ function main(): void {
   let savedModel: string | undefined;
   let savedThinkingEnabled = false;
   let savedTheme: "auto" | "dark" | "light" = "auto";
+  let savedMCPServers: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; timeout?: number; enabled?: boolean }> | undefined;
   try {
     const raw = JSON.parse(fs.readFileSync(getAppPaths().settingsFile, "utf-8"));
     if (raw.defaultProvider) savedProvider = raw.defaultProvider;
@@ -361,6 +362,7 @@ function main(): void {
     if (raw.thinkingEnabled === true) savedThinkingEnabled = true;
     if (raw.theme === "dark" || raw.theme === "light" || raw.theme === "auto")
       savedTheme = raw.theme;
+    if (raw.mcpServers && typeof raw.mcpServers === "object") savedMCPServers = raw.mcpServers;
   } catch {
     // No settings file or invalid JSON — use defaults
   }
@@ -388,6 +390,7 @@ function main(): void {
     thinkingLevel,
     continueRecent,
     theme: savedTheme,
+    userMCPServers: savedMCPServers,
   }).catch((err) => {
     log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
     closeLogger();
@@ -406,6 +409,7 @@ async function runInkTUI(opts: {
   continueRecent?: boolean;
   resumeSessionPath?: string;
   theme?: "auto" | "dark" | "light";
+  userMCPServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string>; timeout?: number; enabled?: boolean }>;
 }): Promise<void> {
   const { provider, model, cwd } = opts;
 
@@ -489,7 +493,7 @@ async function runInkTUI(opts: {
   try {
     const providerApiKey =
       provider === "glm" ? credentialsByProvider["glm"]?.accessToken : undefined;
-    const mcpTools = await mcpManager.connectAll(getMCPServers(provider, providerApiKey));
+    const mcpTools = await mcpManager.connectAll(getMCPServers(provider, providerApiKey, opts.userMCPServers));
     tools.push(...mcpTools);
   } catch (err) {
     log(

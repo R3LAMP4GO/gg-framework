@@ -186,7 +186,8 @@ export class AgentSession {
           // GLM not configured — skip Z.AI MCP servers
         }
       }
-      const mcpTools = await this.mcpManager.connectAll(getMCPServers(this.provider, apiKey));
+      const userMCP = this.settingsManager.get("mcpServers");
+      const mcpTools = await this.mcpManager.connectAll(getMCPServers(this.provider, apiKey, userMCP));
       this.tools.push(...mcpTools);
     } catch (err) {
       log(
@@ -441,7 +442,8 @@ export class AgentSession {
             // GLM not configured — skip Z.AI MCP servers
           }
         }
-        const mcpTools = await this.mcpManager.connectAll(getMCPServers(this.provider, apiKey));
+        const userMCP = this.settingsManager.get("mcpServers");
+        const mcpTools = await this.mcpManager.connectAll(getMCPServers(this.provider, apiKey, userMCP));
         this.tools.push(...mcpTools);
       } catch (err) {
         log(
