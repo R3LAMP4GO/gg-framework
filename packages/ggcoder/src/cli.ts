@@ -805,7 +805,6 @@ async function runMcp(): Promise<void> {
     removeMcpConfig,
     getAllMcpConfigs,
     findServerScopes,
-    getMcpConfigsByScope,
     MCPClientManager,
   } = await import("./core/mcp/index.js");
   const { ensureConfigScope, getScopeLabel, describeMcpConfigFilePath } = await import(

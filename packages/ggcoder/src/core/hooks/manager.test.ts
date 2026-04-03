@@ -5,6 +5,7 @@ import { HookManager } from "./manager.js";
 function mockSettings(hooks: Record<string, unknown> = {}) {
   return {
     get: vi.fn((key: string) => (key === "hooks" ? hooks : undefined)),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
 

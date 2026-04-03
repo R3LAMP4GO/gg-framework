@@ -9,6 +9,7 @@ function msg(role: "system" | "user" | "assistant", content: string): Message {
 function toolUseAssistant(): Message {
   return {
     role: "assistant",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     content: [{ type: "tool_use", id: "t1", name: "read", input: {} }] as any,
   };
 }

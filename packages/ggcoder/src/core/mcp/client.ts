@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { z } from "zod";
 import { log } from "../logger.js";
-import type { MCPServerConfig, MCPToolMeta, ScopedMcpServerConfig } from "./types.js";
+import type { MCPServerConfig, MCPToolMeta } from "./types.js";
 import { truncateDescription } from "./utils.js";
 
 interface ConnectedServer {

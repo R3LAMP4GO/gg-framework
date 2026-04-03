@@ -7,7 +7,6 @@ import {
   tryAcquireLock,
   rollbackLock,
   countSessionsSince,
-  checkConsolidationGate,
   buildConsolidationPrompt,
 } from "./consolidate.js";
 import { clearMemPathCache } from "./paths.js";

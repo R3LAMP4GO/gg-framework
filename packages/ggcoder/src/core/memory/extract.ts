@@ -7,7 +7,7 @@
  */
 
 import type { Message } from "@kenkaiiii/gg-ai";
-import { getAutoMemPath, isAutoMemPath } from "./paths.js";
+import { getAutoMemPath } from "./paths.js";
 import { scanMemoryFiles, formatMemoryManifest } from "./scan.js";
 import { log } from "../logger.js";
 
@@ -160,8 +160,8 @@ export async function runExtraction(
   const headers = await scanMemoryFiles(memoryDir);
   const manifest = formatMemoryManifest(headers);
 
-  // Build extraction prompt
-  const prompt = buildExtractionPrompt(newMessageCount, manifest, memoryDir);
+  // Build extraction prompt (available for caller to pass to subagent)
+  buildExtractionPrompt(newMessageCount, manifest, memoryDir);
 
   log("INFO", "extractMemories", `Starting extraction — ${newMessageCount} new messages`);
 
