@@ -215,10 +215,23 @@ export async function buildSystemPrompt(
     // Filter out the hardcoded grep tool (already documented above)
     const dynamicTools = mcpTools.filter((t) => t.name !== "mcp__grep__searchGitHub");
     if (dynamicTools.length > 0) {
-      const toolLines = dynamicTools.map(
-        (t) => `- **${t.name}**: ${t.description}`,
-      );
-      sections.push(`## MCP Tools (Connected)\n\n${toolLines.join("\n")}`);
+      // Group tools by server name for clear documentation
+      const byServer = new Map<string, typeof dynamicTools>();
+      for (const t of dynamicTools) {
+        const group = byServer.get(t.serverName) ?? [];
+        group.push(t);
+        byServer.set(t.serverName, group);
+      }
+
+      const serverSections: string[] = [];
+      for (const [serverName, tools] of byServer) {
+        const toolLines = tools.map((t) => `  - **${t.name}**: ${t.description}`);
+        serverSections.push(
+          `### ${serverName}\nWhen the user says "use ${serverName}" or "${serverName} MCP", use these tools:\n${toolLines.join("\n")}`,
+        );
+      }
+
+      sections.push(`## MCP Tools (Connected)\n\n${serverSections.join("\n\n")}`);
     }
   }
 
