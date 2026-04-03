@@ -2385,11 +2385,6 @@ export function App(props: AppProps) {
               ]);
             }}
             onToggleExpandOutput={() => setExpandToolOutput((prev) => !prev)}
-            onUpAtTop={() => {
-              // Up arrow at top of input → open background tasks overlay
-              stdout?.write("\x1b[2J\x1b[3J\x1b[H");
-              setOverlay("bg-tasks");
-            }}
             cwd={props.cwd}
             commands={allCommands}
           />

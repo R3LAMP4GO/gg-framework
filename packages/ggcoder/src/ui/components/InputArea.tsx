@@ -101,7 +101,6 @@ interface InputAreaProps {
   isAgentRunning?: boolean;
   isActive?: boolean;
   onDownAtEnd?: () => void;
-  onUpAtTop?: () => void;
   onShiftTab?: () => void;
   onToggleTasks?: () => void;
   onToggleSkills?: () => void;
@@ -167,7 +166,6 @@ export function InputArea({
   isAgentRunning = false,
   isActive = true,
   onDownAtEnd,
-  onUpAtTop,
   onShiftTab,
   onToggleTasks,
   onToggleSkills,
@@ -733,18 +731,25 @@ export function InputArea({
           setMenuIndex((i) => Math.max(0, i - 1));
           return;
         }
+
+        // If images exist and we're at the top (no history or at start), enter image selection
+        if (images.length > 0 && selectedImageIndex === null) {
+          const history = historyRef.current;
+          if (history.length === 0 || historyIndexRef.current === 0 || historyIndexRef.current === -1) {
+            setSelectedImageIndex(images.length - 1); // Select last image
+            return;
+          }
+        }
+
+        // Navigate within image selection (left/right handles this, up exits upward)
+        if (selectedImageIndex !== null) {
+          // Already in image selection — up arrow does nothing (stay in images)
+          return;
+        }
+
         setSelectionAnchor(null);
         const history = historyRef.current;
-        if (history.length === 0) {
-          // No history — fire up-at-top callback (opens background tasks)
-          onUpAtTop?.();
-          return;
-        }
-        // Already at top of history — fire callback
-        if (historyIndexRef.current === 0) {
-          onUpAtTop?.();
-          return;
-        }
+        if (history.length === 0) return;
         const newIndex =
           historyIndexRef.current === -1
             ? history.length - 1
@@ -764,6 +769,14 @@ export function InputArea({
           setMenuIndex((i) => Math.min(filteredCommands.length - 1, i + 1));
           return;
         }
+
+        // If in image selection mode, down arrow exits to chat
+        if (selectedImageIndex !== null) {
+          setSelectedImageIndex(null);
+          if (onDownAtEnd) onDownAtEnd();
+          return;
+        }
+
         setSelectionAnchor(null);
         const history = historyRef.current;
         if (historyIndexRef.current === -1) {
@@ -840,6 +853,40 @@ export function InputArea({
           setCursor(nextWordBoundary(value, cursor));
         }
         return;
+      }
+
+      // ── Image selection navigation ──
+      if (selectedImageIndex !== null) {
+        if (key.leftArrow) {
+          setSelectedImageIndex((i) => Math.max(0, (i ?? 0) - 1));
+          return;
+        }
+        if (key.rightArrow) {
+          setSelectedImageIndex((i) => Math.min(images.length - 1, (i ?? 0) + 1));
+          return;
+        }
+        if (key.backspace || key.delete) {
+          // Delete selected image
+          const idx = selectedImageIndex;
+          setImages((prev) => prev.filter((_, i) => i !== idx));
+          if (images.length <= 1) {
+            setSelectedImageIndex(null);
+          } else {
+            setSelectedImageIndex(Math.max(0, idx - 1));
+          }
+          return;
+        }
+        if (key.escape) {
+          setSelectedImageIndex(null);
+          return;
+        }
+        // Any other key exits image selection and types into input
+        if (input && !key.ctrl && !key.meta) {
+          setSelectedImageIndex(null);
+          // Fall through to normal input handling
+        } else {
+          return;
+        }
       }
 
       // Arrow keys — Shift extends selection, Meta/Option jumps words
