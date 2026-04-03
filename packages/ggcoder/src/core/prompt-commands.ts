@@ -496,6 +496,114 @@ Style preferences and subjective improvements are not valid findings. Only repor
 
 If the code aligns well with real-world patterns, say so. That's a good outcome.`,
   },
+  {
+    name: "e2e",
+    aliases: ["test-e2e", "dungeon"],
+    description: "Run E2E browser tests via Patchright MCP",
+    prompt: `Perform end-to-end browser testing on this project using the Patchright MCP tools.
+
+## Step 1 — Find the dev server
+
+Check for a running dev server or start one:
+- Read package.json for dev/start scripts
+- Run \`bash\` with \`run_in_background=true\` to start the dev server if not running
+- Wait for it to be ready (check with a quick fetch or retry)
+- Identify the URL (typically http://localhost:3000, 5173, 8080, etc.)
+
+## Step 2 — Browse to the app
+
+Use \`mcp__patchright__browse\` to navigate to the dev server URL.
+- Verify the page loads (check title and visible text)
+- Report any immediate errors
+
+## Step 3 — Test critical paths
+
+Use \`mcp__patchright__interact\` and \`mcp__patchright__extract\` to test key user flows:
+
+1. **Navigation**: Click through main nav links, verify pages load
+2. **Forms**: Fill and submit any forms, verify success/error states
+3. **Authentication**: If there's a login, test the auth flow
+4. **Dynamic content**: Trigger any interactive elements (modals, dropdowns, tabs)
+5. **API calls**: Navigate pages that fetch data, verify content appears
+
+For each interaction:
+- Use \`mcp__patchright__interact\` to click, type, or select
+- Use \`mcp__patchright__extract\` to capture the page state after each action
+- Check for error text, broken layouts, or missing content
+
+## Step 4 — Check console and network
+
+Use \`mcp__patchright__extract\` with appropriate options to capture:
+- **Console errors**: Any JavaScript errors or warnings
+- **Failed network requests**: 4xx/5xx responses
+- **Missing resources**: 404s for assets, fonts, images
+
+## Step 5 — Edge cases
+
+Test at least 3 edge cases:
+- Empty states (no data)
+- Invalid input (form validation)
+- Rapid navigation (click multiple links quickly)
+- Browser back/forward behavior
+
+## Step 6 — Clean up
+
+Use \`mcp__patchright__close\` to close the browser.
+Stop any dev server you started (use \`task_stop\`).
+
+## Output
+
+Report findings as:
+\`\`\`
+[PASS/FAIL/WARN] Path tested — What happened
+  Evidence: What was seen on page
+  Console: Any errors (if applicable)
+\`\`\`
+
+Summary: X paths tested, Y passed, Z failed, W warnings.
+If all pass, say so. If failures found, list them with reproduction steps.`,
+  },
+  {
+    name: "validate-ui",
+    aliases: ["validate-e2e"],
+    description: "Validate recent UI changes via Patchright browser testing",
+    prompt: `Validate the most recent UI changes in this project using Patchright MCP browser testing.
+
+## Step 1 — Identify what changed
+
+Use \`bash\` to run \`git diff --name-only HEAD~1\` (or check recent conversation context) to find which UI files were modified.
+
+## Step 2 — Start dev server
+
+Check for and start the dev server if needed (background process).
+
+## Step 3 — Test changed components
+
+For each modified UI file:
+1. Use \`mcp__patchright__browse\` to navigate to the page containing that component
+2. Use \`mcp__patchright__extract\` to capture current state
+3. Use \`mcp__patchright__interact\` to test the component's interactive behavior
+4. Verify:
+   - Component renders without errors
+   - Interactive elements respond correctly
+   - No console errors
+   - Layout looks reasonable (no overlapping, missing content)
+
+## Step 4 — Regression check
+
+Test 2-3 pages that were NOT changed to verify nothing broke.
+
+## Step 5 — Report
+
+\`\`\`
+[PASS/FAIL] component-name — What was tested
+  Changed in: file-path
+  Tested at: URL
+  Result: What happened
+\`\`\`
+
+Use \`mcp__patchright__close\` when done.`,
+  },
 ];
 
 /** Look up a prompt command by name or alias */
