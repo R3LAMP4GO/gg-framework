@@ -16,6 +16,7 @@ const SettingsSchema = z.object({
   showTokenUsage: z.boolean().default(true),
   showThinking: z.boolean().default(true),
   enabledTools: z.array(z.string()).optional(),
+  buddyEnabled: z.boolean().default(false),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -29,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "auto",
   showTokenUsage: true,
   showThinking: true,
+  buddyEnabled: false,
 };
 
 // ── Settings Manager ───────────────────────────────────────

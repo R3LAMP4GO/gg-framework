@@ -343,6 +343,9 @@ export class AgentSession {
         signal: this.opts.signal,
         accountId,
         cacheRetention: "short",
+        // clearToolUses disabled — causes model to output unsolicited context summaries
+        // Single tool result shouldn't exceed 30% of context window (in chars)
+        maxToolResultChars: Math.floor(getContextWindow(this.model) * 3.5 * 0.3),
         getSteeringMessages: async () => {
           const gateMsg = await this.verificationGate.getSteeringMessage();
           if (gateMsg) {
@@ -389,6 +392,14 @@ export class AgentSession {
         return;
       }
       if (err instanceof ProviderError && err.statusCode === 401) {
+        // API-key providers (GLM, Moonshot) have no refresh mechanism — retrying
+        // with the same key is pointless. Clear the credential and let the error
+        // surface so the user knows to re-login with a valid key.
+        if (this.provider === "glm" || this.provider === "moonshot") {
+          log("WARN", "auth", `Got 401 for ${this.provider} — API key is invalid or revoked`);
+          await this.authStorage.clearCredentials(this.provider);
+          throw err;
+        }
         log("INFO", "auth", "Got 401, force-refreshing token and retrying");
         creds = await this.authStorage.resolveCredentials(this.provider, { forceRefresh: true });
         await runAgentLoop(creds.accessToken, creds.accountId);

@@ -1,5 +1,8 @@
-export const MAX_LINES = 500;
-export const MAX_CHARS = 100_000; // ~25,000 tokens at ~4 chars/token
+export const MAX_LINES = 2000;
+export const MAX_BYTES = 50 * 1024; // 50KB
+
+/** @deprecated Use MAX_BYTES instead. Kept for backwards compatibility with tests. */
+export const MAX_CHARS = MAX_BYTES;
 
 export interface TruncateResult {
   content: string;
@@ -15,7 +18,7 @@ export interface TruncateResult {
 export function truncateHead(
   content: string,
   maxLines = MAX_LINES,
-  maxChars = MAX_CHARS,
+  maxBytes = MAX_BYTES,
 ): TruncateResult {
   const lines = content.split("\n");
   const totalLines = lines.length;
@@ -23,12 +26,12 @@ export function truncateHead(
   // Limit by line count
   let kept = lines.slice(0, maxLines);
 
-  // Limit by character count
+  // Limit by byte count
   let size = 0;
   let cutIndex = kept.length;
   for (let i = 0; i < kept.length; i++) {
-    size += kept[i].length + 1; // +1 for newline
-    if (size > maxChars) {
+    size += Buffer.byteLength(kept[i], "utf-8") + 1; // +1 for newline
+    if (size > maxBytes) {
       cutIndex = i;
       break;
     }
@@ -51,7 +54,7 @@ export function truncateHead(
 export function truncateTail(
   content: string,
   maxLines = MAX_LINES,
-  maxChars = MAX_CHARS,
+  maxBytes = MAX_BYTES,
 ): TruncateResult {
   const lines = content.split("\n");
   const totalLines = lines.length;
@@ -59,12 +62,12 @@ export function truncateTail(
   // Limit by line count — keep last N
   let kept = lines.slice(-maxLines);
 
-  // Limit by character count — keep last N chars
+  // Limit by byte count — keep last N bytes
   let size = 0;
   let cutIndex = 0;
   for (let i = kept.length - 1; i >= 0; i--) {
-    size += kept[i].length + 1;
-    if (size > maxChars) {
+    size += Buffer.byteLength(kept[i], "utf-8") + 1;
+    if (size > maxBytes) {
       cutIndex = i + 1;
       break;
     }

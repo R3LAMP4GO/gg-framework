@@ -2,8 +2,9 @@ import React from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
-import { useAnimationTick, deriveFrame } from "./AnimationContext.js";
+import { useAnimationTick, useAnimationActive, deriveFrame } from "./AnimationContext.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
+import { ToolUseLoader } from "./ToolUseLoader.js";
 
 export interface SubAgentInfo {
   toolCallId: string;
@@ -57,13 +58,18 @@ const AgentRow = React.memo(
     const isRunning = agent.status === "running" && !aborted;
 
     // Derive spinner frame from global animation tick
+    useAnimationActive();
     const tick = useAnimationTick();
     const frame = deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length);
 
     const branch = isLast ? "└─" : "├─";
     const continuation = isLast ? "   " : "│  ";
 
-    const taskDisplay = agent.task.length > 50 ? agent.task.slice(0, 47) + "…" : agent.task;
+    // Extract a clean, single-line display name from the task.
+    // Strip markdown bold markers and take only the first line to prevent
+    // multi-line prompts from leaking into the tree view.
+    const firstLine = agent.task.split("\n")[0].replace(/\*\*/g, "");
+    const taskDisplay = firstLine.length > 60 ? firstLine.slice(0, 57) + "…" : firstLine;
 
     const totalTokens = agent.tokenUsage.input + agent.tokenUsage.output;
 
@@ -145,7 +151,6 @@ const AgentRow = React.memo(
 );
 
 export function SubAgentPanel({ agents, aborted = false }: SubAgentPanelProps) {
-  const theme = useTheme();
   const { columns } = useTerminalSize();
 
   if (agents.length === 0) return null;
@@ -153,7 +158,7 @@ export function SubAgentPanel({ agents, aborted = false }: SubAgentPanelProps) {
   const runningCount = agents.filter((a) => a.status === "running").length;
   const allDone = runningCount === 0;
 
-  // "⏺ " prefix = 2 chars — content area gets the rest
+  // ToolUseLoader minWidth={2} = 2 chars
   const HEADER_PREFIX = 2;
   const contentColumns = Math.max(10, columns - HEADER_PREFIX);
 
@@ -163,11 +168,11 @@ export function SubAgentPanel({ agents, aborted = false }: SubAgentPanelProps) {
       ? `${agents.length} agent${agents.length !== 1 ? "s" : ""} completed`
       : `${agents.length} agent${agents.length !== 1 ? "s" : ""} launched`;
 
+  const dotStatus = aborted ? "error" : allDone ? "done" : "running";
+
   return (
     <Box marginTop={1} flexDirection="row">
-      <Box width={HEADER_PREFIX} flexShrink={0}>
-        <Text color={theme.primary}>{"⏺ "}</Text>
-      </Box>
+      <ToolUseLoader status={dotStatus} />
       <Box flexDirection="column" flexGrow={1} width={contentColumns}>
         <Text bold wrap="wrap">
           {headerText}

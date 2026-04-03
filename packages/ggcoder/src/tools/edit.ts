@@ -114,7 +114,11 @@ export function createEditTool(
         if (tsDiagText) allWarnings.push(tsDiagText);
       }
 
-      return allWarnings.length > 0 ? `${diff}\n\n${allWarnings.join("\n")}` : diff;
+      const warningsSuffix = allWarnings.length > 0 ? `\n\n${allWarnings.join("\n")}` : "";
+      return {
+        content: `Successfully replaced text in ${relPath}.${warningsSuffix}`,
+        details: { diff },
+      };
     },
   };
 }

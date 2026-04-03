@@ -9,35 +9,43 @@ import {
   plainTextLength,
   wrapPlainTextLines,
 } from "../utils/table-text.js";
+import { markdownTokenCache, containsMarkdownSyntax } from "../utils/markdown-cache.js";
 
 /**
  * Render a markdown string as Ink components.
- * Measures its own available width via Ink's layout engine so tables
- * always fit regardless of parent padding, prefixes, or sidebars.
  *
- * Pass an explicit `width` to bypass measurement (required inside
- * Ink's `<Static>` where re-renders don't update flushed output).
+ * Pass an explicit `width` to bypass self-measurement — strongly
+ * recommended during streaming to avoid 30+ measureElement calls/sec.
+ * Required inside Ink's `<Static>` where re-renders don't update
+ * flushed output.
  */
-export function Markdown({ children, width: explicitWidth }: { children: string; width?: number }) {
+export const Markdown = React.memo(function Markdown({
+  children,
+  width: explicitWidth,
+}: {
+  children: string;
+  width?: number;
+}) {
   const theme = useTheme();
   const { stdout } = useStdout();
   const ref = useRef<DOMElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState(0);
 
+  // Only self-measure when no explicit width is provided. When explicitWidth
+  // is set (e.g. during streaming), this effect is a no-op — avoiding
+  // ~30 measureElement calls/sec that cause layout thrashing.
   useLayoutEffect(() => {
-    if (explicitWidth != null) return; // skip measurement when width is provided
+    if (explicitWidth != null) return;
     if (ref.current) {
       const { width } = measureElement(ref.current);
       if (width > 0 && width !== measuredWidth) {
         setMeasuredWidth(width);
       }
     }
-  }, [children, measuredWidth, explicitWidth]);
+    // Depend on measuredWidth so we re-measure if it changes (e.g. resize),
+    // but NOT on children — that's what caused 30/sec measurements.
+  }, [measuredWidth, explicitWidth]);
 
-  // Use explicit width if provided, then measured width, then fallback.
-  // The "⏺ " prefix = 2 cols, live area paddingRight = 1 col,
-  // plus 1 col safety margin = 4.  After the first layout pass,
-  // measuredWidth takes over with the exact value.
   const columns =
     explicitWidth != null
       ? explicitWidth
@@ -60,10 +68,87 @@ export function Markdown({ children, width: explicitWidth }: { children: string;
         trailingFragment = lines.pop()!;
       }
     }
-    return { body: lines.join("\n"), trailingFragment };
+
+    // Detect unclosed code fences: if there's an opening ``` without a matching
+    // close, strip just the opening fence line so marked doesn't swallow all
+    // subsequent content (lists, bullets, etc.) into one giant code block.
+    // The content after the fence is kept in the body as regular markdown.
+    let body = lines.join("\n");
+    const fencePattern = /^(`{3,}|~{3,})([^\n]*)/m;
+    let searchFrom = 0;
+    while (searchFrom < body.length) {
+      const openMatch = fencePattern.exec(body.slice(searchFrom));
+      if (!openMatch) break;
+      const openIdx = searchFrom + openMatch.index;
+      const fence = openMatch[1];
+      const afterOpen = body.indexOf("\n", openIdx);
+      if (afterOpen === -1) break; // fence is the last line
+      // Find the closing fence (same char, same or more length, at start of line)
+      const closePattern = new RegExp(`^${fence[0]}{${fence.length},}\\s*$`, "m");
+      const closeMatch = closePattern.exec(body.slice(afterOpen));
+      if (closeMatch) {
+        // Fence is closed — skip past it
+        searchFrom = afterOpen + closeMatch.index + closeMatch[0].length;
+      } else {
+        // Unclosed fence — remove the opening fence line so the content
+        // after it gets parsed as normal markdown (lists, bullets, etc.)
+        body = body.slice(0, openIdx) + body.slice(afterOpen + 1);
+        break;
+      }
+    }
+
+    return { body, trailingFragment };
   }, [children]);
 
-  const tokens = useMemo(() => marked.lexer(stabilised.body), [stabilised.body]);
+  // Throttle markdown parsing during streaming: only re-parse when the
+  // stabilised body has changed by a meaningful amount (100+ chars) or
+  // on the final value. This reduces expensive marked.lexer calls from
+  // ~30/sec to ~5-10/sec during heavy streaming.
+  //
+  // Layered caching:
+  // 1. Plain-text fast path — skip marked.lexer() entirely for text with no markdown syntax
+  // 2. LRU cache (500 entries) — avoids re-parsing completed messages on scroll
+  // 3. Streaming throttle — skip re-parse if body grew < 100 chars
+  const lastParsedBodyRef = useRef("");
+  const lastTokensRef = useRef<Token[]>([]);
+
+  const tokens = useMemo(() => {
+    const body = stabilised.body;
+    const delta = body.length - lastParsedBodyRef.current.length;
+
+    // Streaming throttle: skip if delta is small and we already have tokens
+    if (lastTokensRef.current.length > 0 && delta > 0 && delta < 100) {
+      return lastTokensRef.current;
+    }
+
+    // Check LRU cache first (mainly benefits completed messages on re-render)
+    const cached = markdownTokenCache.get(body);
+    if (cached) {
+      lastParsedBodyRef.current = body;
+      lastTokensRef.current = cached;
+      return cached;
+    }
+
+    // Plain-text fast path: skip marked.lexer() for text with no markdown syntax
+    let result: Token[];
+    if (!containsMarkdownSyntax(body)) {
+      result = [
+        {
+          type: "paragraph",
+          raw: body,
+          text: body,
+          tokens: [{ type: "text", raw: body, text: body }],
+        } as Tokens.Paragraph,
+      ];
+    } else {
+      result = marked.lexer(body);
+    }
+
+    lastParsedBodyRef.current = body;
+    lastTokensRef.current = result;
+    markdownTokenCache.set(body, result);
+    return result;
+  }, [stabilised.body]);
 
   return (
     <Box ref={ref} flexDirection="column" flexShrink={1}>
@@ -71,7 +156,7 @@ export function Markdown({ children, width: explicitWidth }: { children: string;
       {stabilised.trailingFragment && <Text color={theme.text}>{stabilised.trailingFragment}</Text>}
     </Box>
   );
-}
+});
 
 function renderTokens(tokens: Token[], theme: Theme, columns: number): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
@@ -140,14 +225,19 @@ function renderToken(token: Token, theme: Theme, key: number, columns: number): 
       const lang = (token as Tokens.Code).lang ?? "";
       const raw = (token as Tokens.Code).text;
 
-      // No language tag → likely prose dumped in backticks; render as wrapped text
+      // No language tag → render as pre-formatted block preserving line structure
       if (!lang) {
+        const codeLines = raw.split("\n");
         return (
-          <Box key={key} marginTop={gap} paddingLeft={1}>
-            <Text color={theme.border}>{"▎ "}</Text>
-            <Box flexShrink={1}>
-              <Text color={theme.text}>{raw.replace(/\n/g, " ")}</Text>
-            </Box>
+          <Box key={key} marginTop={gap} paddingLeft={1} flexDirection="column">
+            {codeLines.map((line: string, idx: number) => (
+              <Box key={idx}>
+                <Text color={theme.border}>{"▎ "}</Text>
+                <Box flexShrink={1}>
+                  <Text color={theme.text}>{line}</Text>
+                </Box>
+              </Box>
+            ))}
           </Box>
         );
       }
@@ -411,10 +501,10 @@ function renderInline(tokens: Token[], theme: Theme, parentStyle?: InlineStyle):
             </Text>
           );
         }
-        // Single \n in markdown is a soft break (space), not a line break
+        // Preserve newlines — LLM output uses \n intentionally for structure
         return (
           <Text key={i} color={defaultColor}>
-            {textToken.raw.replace(/\n/g, " ")}
+            {textToken.raw}
           </Text>
         );
       }
@@ -441,3 +531,98 @@ function renderInline(tokens: Token[], theme: Theme, parentStyle?: InlineStyle):
     }
   });
 }
+
+// ── Streaming Markdown ────────────────────────────────────────
+//
+// Splits text at the last top-level block boundary.  Everything before
+// the boundary is "stable" — memoized, never re-parsed.  Only the
+// final (unstable) block is re-parsed on each streaming delta, making
+// the cost O(unstable tail) instead of O(full text).
+
+/**
+ * Strip trailing incomplete table rows and unclosed code fences,
+ * identical to the stabilisation logic in <Markdown>.
+ */
+function stabilize(text: string): string {
+  const lines = text.split("\n");
+  if (lines.length > 0) {
+    const lastLine = lines[lines.length - 1];
+    if (lastLine.startsWith("|") && !lastLine.trimEnd().endsWith("|")) {
+      lines.pop();
+    }
+  }
+  let body = lines.join("\n");
+  const fencePattern = /^(`{3,}|~{3,})([^\n]*)/m;
+  let searchFrom = 0;
+  while (searchFrom < body.length) {
+    const openMatch = fencePattern.exec(body.slice(searchFrom));
+    if (!openMatch) break;
+    const openIdx = searchFrom + openMatch.index;
+    const fence = openMatch[1];
+    const afterOpen = body.indexOf("\n", openIdx);
+    if (afterOpen === -1) break;
+    const closePattern = new RegExp(`^${fence[0]}{${fence.length},}\\s*$`, "m");
+    const closeMatch = closePattern.exec(body.slice(afterOpen));
+    if (closeMatch) {
+      searchFrom = afterOpen + closeMatch.index + closeMatch[0].length;
+    } else {
+      body = body.slice(0, openIdx) + body.slice(afterOpen + 1);
+      break;
+    }
+  }
+  return body;
+}
+
+export const StreamingMarkdown = React.memo(function StreamingMarkdown({
+  children,
+  width,
+}: {
+  children: string;
+  width: number;
+}) {
+  const stableBoundaryRef = useRef(0);
+
+  const stripped = useMemo(() => stabilize(children), [children]);
+
+  // Find the last top-level block boundary and advance stableBoundaryRef monotonically
+  const { stablePrefix, unstableSuffix } = useMemo(() => {
+    const boundary = stableBoundaryRef.current;
+    const tail = stripped.substring(boundary);
+
+    // Skip full lexing if tail is short enough — not worth the split overhead
+    if (tail.length < 200) {
+      return { stablePrefix: stripped.substring(0, boundary), unstableSuffix: tail };
+    }
+
+    const tokens = containsMarkdownSyntax(tail) ? marked.lexer(tail) : [];
+
+    // Find last non-space content token
+    let lastContentIdx = tokens.length - 1;
+    while (lastContentIdx >= 0 && tokens[lastContentIdx]?.type === "space") {
+      lastContentIdx--;
+    }
+
+    // Sum raw lengths of all tokens except the last = stable advancement
+    let advance = 0;
+    for (let i = 0; i < lastContentIdx; i++) {
+      advance += tokens[i]!.raw.length;
+    }
+
+    // Only advance forward (monotonic)
+    if (advance > 0) {
+      stableBoundaryRef.current = boundary + advance;
+    }
+
+    return {
+      stablePrefix: stripped.substring(0, stableBoundaryRef.current),
+      unstableSuffix: stripped.substring(stableBoundaryRef.current),
+    };
+  }, [stripped]);
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {stablePrefix && <Markdown width={width}>{stablePrefix}</Markdown>}
+      {unstableSuffix && <Markdown width={width}>{unstableSuffix}</Markdown>}
+    </Box>
+  );
+});

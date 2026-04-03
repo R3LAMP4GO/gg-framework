@@ -190,6 +190,20 @@ export function createBuiltinCommands(): SlashCommand[] {
       },
     },
     {
+      name: "buddy",
+      aliases: [],
+      description: "Toggle the buddy companion on/off",
+      usage: "/buddy",
+      async execute(_args, ctx) {
+        const settings = ctx.getSettings() as Record<string, unknown>;
+        const current = !!settings.buddyEnabled;
+        await ctx.setSetting("buddyEnabled", !current);
+        return !current
+          ? "Buddy enabled! Your companion will appear near the prompt."
+          : "Buddy disabled.";
+      },
+    },
+    {
       name: "help",
       aliases: ["h", "?"],
       description: "Show available commands",

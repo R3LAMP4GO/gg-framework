@@ -1,11 +1,9 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import type { ProcessManager } from "../core/process-manager.js";
 import { killProcessTree } from "../utils/process.js";
 import { truncateTail } from "./truncate.js";
+import { writeOverflow } from "./overflow.js";
 import { localOperations, type ToolOperations } from "./operations.js";
 
 const DEFAULT_TIMEOUT = 120_000; // 120 seconds
@@ -167,10 +165,9 @@ export function createBashTool(
             output = `[Output capped at ${MAX_OUTPUT_BYTES / 1024 / 1024} MB to prevent memory exhaustion]\n${output}`;
           }
           if (result.truncated) {
-            // Save full output to temp file
-            const tmpPath = path.join(os.tmpdir(), `gg-bash-${Date.now()}.txt`);
-            await fs.writeFile(tmpPath, rawOutput, "utf-8").catch(() => {});
-            output = `[Truncated: showing last ${result.keptLines} of ${result.totalLines} lines. Full output: ${tmpPath}]\n${output}`;
+            const overflowPath = await writeOverflow(rawOutput, "bash").catch(() => null);
+            const overflowNotice = overflowPath ? ` Full output: ${overflowPath}` : "";
+            output = `[Truncated: showing last ${result.keptLines} of ${result.totalLines} lines.${overflowNotice}]\n${output}`;
           }
 
           const exitCode = timedOut

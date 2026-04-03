@@ -91,6 +91,8 @@ function streamGLMWithFallback(options: StreamOptions): StreamResult {
 
 async function runGLMWithFallback(options: StreamOptions, result: StreamResult): Promise<void> {
   const codingResult = streamOpenAI({ ...options, baseUrl: GLM_CODING_BASE_URL });
+  // Suppress unhandled rejection — the for-await path throws first
+  codingResult.response.catch(() => {});
 
   try {
     for await (const event of codingResult) {
@@ -100,6 +102,7 @@ async function runGLMWithFallback(options: StreamOptions, result: StreamResult):
   } catch {
     // Coding endpoint failed — try regular endpoint
     const regularResult = streamOpenAI({ ...options, baseUrl: GLM_REGULAR_BASE_URL });
+    regularResult.response.catch(() => {});
     try {
       for await (const event of regularResult) {
         result.push(event);

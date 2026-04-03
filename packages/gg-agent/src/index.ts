@@ -16,6 +16,8 @@ export type {
   AgentServerToolCallEvent,
   AgentServerToolResultEvent,
   AgentSteeringMessageEvent,
+  AgentFollowUpMessageEvent,
+  AgentRetryEvent,
   AgentTurnEndEvent,
   AgentDoneEvent,
   AgentErrorEvent,

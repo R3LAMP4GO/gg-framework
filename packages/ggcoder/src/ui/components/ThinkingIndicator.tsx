@@ -3,7 +3,7 @@ import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 
 import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
-import { useAnimationTick, deriveFrame } from "./AnimationContext.js";
+import { useAnimationTick, useAnimationActive, deriveFrame } from "./AnimationContext.js";
 
 // ── Color pulse cycle ─────────────────────────────────────
 
@@ -148,6 +148,7 @@ interface ThinkingIndicatorProps {
 
 export function ThinkingIndicator({ userMessage = "" }: ThinkingIndicatorProps) {
   const theme = useTheme();
+  useAnimationActive();
   const tick = useAnimationTick();
 
   // Derive all animation frames from the single global tick

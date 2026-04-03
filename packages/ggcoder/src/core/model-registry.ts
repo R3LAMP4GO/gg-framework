@@ -66,11 +66,11 @@ export const MODELS: ModelInfo[] = [
   },
   // ── GLM (Z.AI) ───────────────────────────────────────────
   {
-    id: "glm-5",
-    name: "GLM-5",
+    id: "glm-5.1",
+    name: "GLM-5.1",
     provider: "glm",
-    contextWindow: 128_000,
-    maxOutputTokens: 16_384,
+    contextWindow: 204_800,
+    maxOutputTokens: 131_072,
     supportsThinking: true,
     supportsImages: false,
     costTier: "medium",
@@ -79,17 +79,27 @@ export const MODELS: ModelInfo[] = [
     id: "glm-4.7",
     name: "GLM-4.7",
     provider: "glm",
-    contextWindow: 128_000,
+    contextWindow: 200_000,
     maxOutputTokens: 16_384,
     supportsThinking: true,
     supportsImages: false,
     costTier: "low",
   },
   {
+    id: "glm-5v-turbo",
+    name: "GLM-5V Turbo",
+    provider: "glm",
+    contextWindow: 200_000,
+    maxOutputTokens: 128_000,
+    supportsThinking: true,
+    supportsImages: true,
+    costTier: "medium",
+  },
+  {
     id: "glm-4.7-flash",
     name: "GLM-4.7 Flash",
     provider: "glm",
-    contextWindow: 128_000,
+    contextWindow: 200_000,
     maxOutputTokens: 16_384,
     supportsThinking: true,
     supportsImages: false,
@@ -100,7 +110,7 @@ export const MODELS: ModelInfo[] = [
     id: "kimi-k2.5",
     name: "Kimi K2.5",
     provider: "moonshot",
-    contextWindow: 128_000,
+    contextWindow: 200_000,
     maxOutputTokens: 16_384,
     supportsThinking: true,
     supportsImages: true,
@@ -118,7 +128,7 @@ export function getModelsForProvider(provider: Provider): ModelInfo[] {
 
 export function getDefaultModel(provider: Provider): ModelInfo {
   if (provider === "openai") return MODELS.find((m) => m.id === "gpt-5.3-codex")!;
-  if (provider === "glm") return MODELS.find((m) => m.id === "glm-5")!;
+  if (provider === "glm") return MODELS.find((m) => m.id === "glm-5.1")!;
   if (provider === "moonshot") return MODELS.find((m) => m.id === "kimi-k2.5")!;
   return MODELS.find((m) => m.id === "claude-sonnet-4-6")!;
 }

@@ -1,9 +1,16 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
-import type { ActivityPhase } from "../hooks/useAgentLoop.js";
+import type { ActivityPhase, RetryInfo } from "../hooks/useAgentLoop.js";
 
-import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
+import { SPINNER_FRAMES, SPINNER_INTERVAL, REDUCED_MOTION_DOT } from "../spinner-frames.js";
+import { PLANNING_PHRASES, selectPhrases, shuffleArray } from "../activity-phrases.js";
+import {
+  useAnimationTick,
+  useAnimationActive,
+  deriveFrame,
+  useReducedMotion,
+} from "./AnimationContext.js";
 
 // ── Color pulse cycle ─────────────────────────────────────
 
@@ -37,244 +44,6 @@ const ELLIPSIS_INTERVAL = 500;
 
 const WAITING_PHRASE_INTERVAL = 3000;
 const OTHER_PHRASE_INTERVAL = 4000;
-
-const CONTEXTUAL_PHRASES = [
-  {
-    keywords: /\b(bug|fix|error|issue|broken|crash|fail|wrong)\b/i,
-    phrases: [
-      "Investigating",
-      "Diagnosing",
-      "Tracing the issue",
-      "Hunting the bug",
-      "Analyzing the problem",
-      "Narrowing it down",
-    ],
-  },
-  {
-    keywords: /\b(refactor|clean|improve|optimize|simplify|restructure)\b/i,
-    phrases: [
-      "Studying the code",
-      "Planning improvements",
-      "Mapping dependencies",
-      "Finding patterns",
-      "Designing the approach",
-    ],
-  },
-  {
-    keywords: /\b(test|spec|coverage|assert|expect|describe|it\()\b/i,
-    phrases: [
-      "Designing tests",
-      "Thinking about edge cases",
-      "Planning test coverage",
-      "Considering scenarios",
-    ],
-  },
-  {
-    keywords: /\b(build|deploy|ci|cd|pipeline|docker|config)\b/i,
-    phrases: [
-      "Checking the config",
-      "Analyzing the pipeline",
-      "Working through setup",
-      "Reviewing the build",
-    ],
-  },
-  {
-    keywords: /\b(style|css|ui|layout|design|color|theme|display|render)\b/i,
-    phrases: [
-      "Visualizing the layout",
-      "Crafting the design",
-      "Considering the aesthetics",
-      "Sketching it out",
-      "Polishing the pixels",
-    ],
-  },
-  {
-    keywords: /\b(add|create|new|implement|feature|make|build)\b/i,
-    phrases: [
-      "Architecting",
-      "Drafting the approach",
-      "Planning the implementation",
-      "Mapping it out",
-      "Designing the solution",
-    ],
-  },
-  {
-    keywords: /\b(explain|how|why|what|understand|describe)\b/i,
-    phrases: [
-      "Reading through the code",
-      "Connecting the dots",
-      "Building understanding",
-      "Tracing the logic",
-      "Piecing it together",
-    ],
-  },
-  {
-    keywords: /\b(delete|remove|drop|clean\s*up|prune|trim)\b/i,
-    phrases: ["Identifying dead code", "Marking for removal", "Cleaning house", "Pruning the tree"],
-  },
-  {
-    keywords: /\b(move|rename|reorganize|restructure|migrate)\b/i,
-    phrases: ["Planning the move", "Mapping the migration", "Tracing dependencies", "Reorganizing"],
-  },
-  {
-    keywords: /\b(fetch|url|http|api|request|web|download|scrape)\b/i,
-    phrases: ["Checking the docs", "Looking it up", "Pulling references", "Gathering info"],
-  },
-  {
-    keywords: /\b(debug|log|trace|inspect|breakpoint|stack\s*trace)\b/i,
-    phrases: [
-      "Following the trail",
-      "Inspecting the stack",
-      "Chasing the bug",
-      "Tracing execution",
-      "Zeroing in",
-    ],
-  },
-  {
-    keywords: /\b(type|types|interface|generic|typescript|schema)\b/i,
-    phrases: [
-      "Mapping the types",
-      "Checking the signatures",
-      "Modeling the data",
-      "Tracing the type graph",
-    ],
-  },
-  {
-    keywords: /\b(commit|push|pull|merge|rebase|branch|git|pr)\b/i,
-    phrases: [
-      "Reviewing the history",
-      "Checking the diff",
-      "Preparing changes",
-      "Sorting out the branch",
-    ],
-  },
-  {
-    keywords: /\b(install|dependency|package|upgrade|update|version)\b/i,
-    phrases: [
-      "Checking dependencies",
-      "Reviewing versions",
-      "Sorting out packages",
-      "Mapping the dep tree",
-    ],
-  },
-];
-
-const PLANNING_PHRASES = [
-  "Studying the codebase",
-  "Mapping the architecture",
-  "Drafting the plan",
-  "Analyzing dependencies",
-  "Charting the course",
-  "Surveying the landscape",
-  "Building the blueprint",
-];
-
-const GENERAL_PHRASES = [
-  "Thinking",
-  "Reasoning",
-  "Processing",
-  "Mulling it over",
-  "Working on it",
-  "Contemplating",
-  "Figuring it out",
-  "Crunching",
-  "Assembling thoughts",
-  "Cooking up a plan",
-  "Brewing ideas",
-  "Spinning up neurons",
-  "Loading wisdom",
-  "Parsing the universe",
-  "Channeling clarity",
-];
-
-const THINKING_PHRASES = [
-  "Deep in thought",
-  "Reasoning",
-  "Contemplating",
-  "Pondering",
-  "Reflecting",
-  "Working through it",
-  "Analyzing",
-  "Deliberating",
-];
-
-const GENERATING_PHRASES = [
-  "Writing",
-  "Composing",
-  "Generating",
-  "Crafting a response",
-  "Drafting",
-  "Putting it together",
-  "Formulating",
-];
-
-const TOOLS_GENERIC = [
-  "Running tools",
-  "Executing",
-  "Working",
-  "Processing",
-  "Operating",
-  "Carrying out tasks",
-];
-
-const TOOL_PHRASES: Record<string, string[]> = {
-  bash: ["Running a command", "Executing in the shell", "Running a process"],
-  read: ["Reading a file", "Scanning the source", "Studying the code"],
-  write: ["Writing a file", "Creating a file", "Laying down code"],
-  edit: ["Editing a file", "Applying changes", "Patching the code"],
-  grep: ["Searching the codebase", "Scanning for matches", "Grepping"],
-  find: ["Locating files", "Searching the tree", "Scanning the directory"],
-  ls: ["Listing files", "Browsing the directory", "Scanning contents"],
-  subagent: ["Dispatching a subagent", "Delegating work", "Spinning up an agent"],
-  "web-fetch": ["Fetching from the web", "Pulling a page", "Downloading content"],
-  tasks: ["Managing tasks", "Updating the task list", "Organizing work"],
-  "task-output": ["Checking task output", "Reading task results"],
-  "task-stop": ["Stopping a task", "Halting a running task"],
-};
-
-function selectToolPhrases(activeToolNames: string[]): string[] {
-  if (activeToolNames.length === 0) return TOOLS_GENERIC;
-
-  const phrases: string[] = [];
-  for (const name of activeToolNames) {
-    const specific = TOOL_PHRASES[name];
-    if (specific) phrases.push(...specific);
-  }
-  return phrases.length > 0 ? phrases : TOOLS_GENERIC;
-}
-
-function selectPhrases(
-  phase: ActivityPhase,
-  userMessage: string,
-  activeToolNames: string[],
-): string[] {
-  switch (phase) {
-    case "thinking":
-      return THINKING_PHRASES;
-    case "generating":
-      return GENERATING_PHRASES;
-    case "tools":
-      return selectToolPhrases(activeToolNames);
-    default: {
-      // waiting / idle — use contextual phrases based on user message
-      for (const set of CONTEXTUAL_PHRASES) {
-        if (set.keywords.test(userMessage)) {
-          return [...set.phrases, ...GENERAL_PHRASES.slice(0, 3)];
-        }
-      }
-      return GENERAL_PHRASES;
-    }
-  }
-}
-
-function shuffleArray<T>(arr: T[]): T[] {
-  const shuffled = [...arr];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
-}
 
 // ── Formatting helpers ────────────────────────────────────
 
@@ -346,10 +115,25 @@ interface ActivityIndicatorProps {
   thinkingMs: number;
   isThinking: boolean;
   tokenEstimate: number;
+  /** Raw character count ref for smooth token animation (read every tick). */
+  charCountRef?: React.RefObject<number>;
+  /** Accumulated real tokens from completed turns. */
+  realTokensAccumRef?: React.RefObject<number>;
   userMessage?: string;
   activeToolNames?: string[];
   planMode?: boolean;
+  retryInfo?: RetryInfo | null;
+  planDone?: number;
+  planTotal?: number;
 }
+
+const RETRY_REASON_LABELS: Record<RetryInfo["reason"], string> = {
+  overloaded: "Provider overloaded",
+  rate_limit: "Rate limited",
+  empty_response: "Empty response",
+  context_overflow: "Context overflow, compacting",
+  stream_stall: "Stream stalled",
+};
 
 export function ActivityIndicator({
   phase,
@@ -357,34 +141,70 @@ export function ActivityIndicator({
   thinkingMs,
   isThinking,
   tokenEstimate,
+  charCountRef: charCountRefProp,
+  realTokensAccumRef: realTokensAccumRefProp,
   userMessage = "",
   activeToolNames = [],
   planMode,
+  retryInfo,
+  planDone = 0,
+  planTotal = 0,
 }: ActivityIndicatorProps) {
   const theme = useTheme();
+  const reducedMotion = useReducedMotion();
 
-  // ── Single animation tick ────────────────────────────────
-  // Instead of 5 separate setIntervals (spinner, pulse, ellipsis, shimmer,
-  // phrase), we use ONE timer at the fastest cadence (SHIMMER_INTERVAL=100ms)
-  // and derive all animation frames via modular arithmetic.  This reduces
-  // Ink re-renders from ~5 independent state updates to 1 batched update
-  // per tick, which prevents live-area height miscalculations that cause
-  // viewport jumping.
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTick((t) => t + 1);
-    }, SHIMMER_INTERVAL);
-    return () => clearInterval(timer);
-  }, []);
+  // Use the global animation tick instead of a local timer.
+  // This eliminates a duplicate 100ms setInterval that was causing
+  // independent re-renders on top of the global AnimationProvider tick.
+  useAnimationActive();
+  const tick = useAnimationTick();
+
+  // ── Smooth token counter animation ─────────────────────
+  // Smooths the TOTAL token estimate (real + estimated) so it never
+  // jumps — whether tokens arrive from streaming deltas or from
+  // turn_end replacing char estimates with real API counts.
+  //
+  // On each 100ms animation tick the displayed count catches up to
+  // the target at a speed that scales with the gap, producing a
+  // rolling-odometer effect.
+  const displayedTokensRef = useRef(0);
+  const currentChars = charCountRefProp?.current ?? 0;
+  const realTokens = realTokensAccumRefProp?.current ?? 0;
+  const targetTokens = charCountRefProp ? realTokens + Math.ceil(currentChars / 4) : tokenEstimate;
+
+  if (reducedMotion || !charCountRefProp) {
+    displayedTokensRef.current = targetTokens;
+  } else {
+    const gap = targetTokens - displayedTokensRef.current;
+    if (gap > 0) {
+      // Scale increment with gap size for smooth catch-up
+      let increment: number;
+      if (gap < 20) {
+        increment = 1;
+      } else if (gap < 50) {
+        increment = Math.max(2, Math.ceil(gap * 0.1));
+      } else if (gap < 200) {
+        increment = Math.max(5, Math.ceil(gap * 0.12));
+      } else {
+        // Large jump (e.g. turn_end real tokens) — faster catch-up
+        increment = Math.max(15, Math.ceil(gap * 0.08));
+      }
+      displayedTokensRef.current = Math.min(displayedTokensRef.current + increment, targetTokens);
+    } else if (gap < 0) {
+      // Reset happened (new run) — snap to target
+      displayedTokensRef.current = targetTokens;
+    }
+  }
+
+  const smoothTokenEstimate = displayedTokensRef.current;
 
   // Derive all animation frames from the single tick counter
-  const spinnerFrame =
-    Math.floor((tick * SHIMMER_INTERVAL) / SPINNER_INTERVAL) % SPINNER_FRAMES.length;
+  const spinnerFrame = reducedMotion
+    ? 0
+    : deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length);
   const pulseColors = planMode ? PLAN_PULSE_COLORS : PULSE_COLORS;
-  const colorFrame = Math.floor((tick * SHIMMER_INTERVAL) / PULSE_INTERVAL) % pulseColors.length;
-  const ellipsisFrame =
-    Math.floor((tick * SHIMMER_INTERVAL) / ELLIPSIS_INTERVAL) % ELLIPSIS_FRAMES.length;
+  const colorFrame = deriveFrame(tick, PULSE_INTERVAL, pulseColors.length);
+  const ellipsisFrame = deriveFrame(tick, ELLIPSIS_INTERVAL, ELLIPSIS_FRAMES.length);
 
   // Phrase rotation — pick phrases based on phase + user message + active tools, shuffle, rotate
   const toolNamesKey = activeToolNames.sort().join(",");
@@ -411,20 +231,68 @@ export function ActivityIndicator({
   // Pad ellipsis to prevent text from shifting
   const paddedEllipsis = ellipsis + " ".repeat(3 - ellipsis.length);
 
-  const meta = buildMetaSuffix(elapsedMs, thinkingMs, isThinking, tokenEstimate);
+  const meta = buildMetaSuffix(elapsedMs, thinkingMs, isThinking, smoothTokenEstimate);
+
+  // ── Plan progress bar ──────────────────────────────────
+  const planBar = useMemo(() => {
+    if (planTotal <= 0) return null;
+    const barWidth = Math.min(planTotal, 20);
+    const filledWidth = Math.round((planDone / planTotal) * barWidth);
+    return "\u2588".repeat(filledWidth) + "\u2591".repeat(barWidth - filledWidth);
+  }, [planDone, planTotal]);
+
+  // ── Retry display ──────────────────────────────────────
+  if (phase === "retrying" && retryInfo) {
+    const retryLabel = RETRY_REASON_LABELS[retryInfo.reason];
+    const retryColor = "#f59e0b"; // amber
+    const delaySec =
+      retryInfo.delayMs > 0 ? ` waiting ${Math.round(retryInfo.delayMs / 1000)}s` : "";
+    return (
+      <Box>
+        <Text color={retryColor} bold>
+          {reducedMotion ? REDUCED_MOTION_DOT : SPINNER_FRAMES[spinnerFrame]}{" "}
+        </Text>
+        <Text color={retryColor}>
+          {retryLabel} — retrying ({retryInfo.attempt}/{retryInfo.maxAttempts})
+        </Text>
+        <Text color={theme.textDim}>
+          {delaySec}
+          {"  ("}
+          {formatElapsed(elapsedMs)}
+          {")"}
+        </Text>
+      </Box>
+    );
+  }
 
   return (
     <Box>
       <Text color={spinnerColor} bold>
-        {SPINNER_FRAMES[spinnerFrame]}{" "}
+        {reducedMotion ? REDUCED_MOTION_DOT : SPINNER_FRAMES[spinnerFrame]}{" "}
       </Text>
-      <ShimmerText text={phrase} color={spinnerColor} shimmerPos={shimmerPos} />
-      <Text color={theme.textDim}>{paddedEllipsis}</Text>
+      {reducedMotion ? (
+        <Text dimColor color={spinnerColor}>
+          {phrase}
+        </Text>
+      ) : (
+        <ShimmerText text={phrase} color={spinnerColor} shimmerPos={shimmerPos} />
+      )}
+      <Text color={theme.textDim}>{reducedMotion ? "..." : paddedEllipsis}</Text>
       {meta && (
         <Text color={theme.textDim}>
           {"  ("}
           {meta}
           {")"}
+        </Text>
+      )}
+      {planBar && (
+        <Text>
+          {"  "}
+          <Text color={planDone === planTotal ? theme.success : theme.planPrimary}>{planBar}</Text>
+          <Text color={theme.textDim}>
+            {" "}
+            {planDone}/{planTotal}
+          </Text>
         </Text>
       )}
     </Box>

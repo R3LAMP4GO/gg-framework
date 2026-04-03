@@ -3,13 +3,21 @@ import { Text, Box, useInput } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { Markdown } from "./Markdown.js";
+import { visualWidth } from "../utils/table-text.js";
 
-// Minimum inner width needed for the ASCII art lines (39 content chars inside ║…║)
-const FRAME_CONTENT_WIDTH = 39;
-const FRAME_OVERHEAD = 4; // ║ + space on each side
+const ART_LINE_1 = " ▀█▀ █ █ █▀▀   █▀█ █   █▀█ █▄ █";
+const ART_LINE_2 = "  █  █▀█ ██▄   █▀▀ █▄▄ █▀█ █ ▀█";
 
-function hLine(char: string, width: number): string {
-  return char.repeat(width);
+// Use visual width (not .length) so padding is correct on all terminals
+const ART_VISUAL_WIDTH = visualWidth(ART_LINE_1);
+
+// ║ + space on each side = 4
+const FRAME_OVERHEAD = 4;
+
+function frameLine(content: string, innerWidth: number): string {
+  const contentVisual = visualWidth(content);
+  const pad = Math.max(0, innerWidth - contentVisual);
+  return "║ " + content + " ".repeat(pad) + " ║";
 }
 
 interface PlanApprovalProps {
@@ -56,31 +64,18 @@ export function PlanApproval({ planPath, planContent, onDecision }: PlanApproval
     }
   });
 
+  const innerWidth = Math.max(ART_VISUAL_WIDTH, columns - FRAME_OVERHEAD);
+  const statusContent = "Review plan · Awaiting your decision";
+
   return (
     <Box flexDirection="column" marginTop={1} width={columns}>
-      {/* ASCII art header */}
-      {(() => {
-        const innerWidth = Math.max(FRAME_CONTENT_WIDTH, columns - FRAME_OVERHEAD);
-        const artPad = innerWidth - FRAME_CONTENT_WIDTH;
-        const statusLine = "Review plan · Awaiting your decision";
-        const statusPad = Math.max(0, innerWidth - 2 - statusLine.length);
-        return (
-          <>
-            <Text color={theme.planPrimary}>{"╔" + hLine("═", innerWidth + 2) + "╗"}</Text>
-            <Text color={theme.planPrimary}>
-              {"║ ▀█▀ █ █ █▀▀   █▀█ █   █▀█ █▄ █" + " ".repeat(artPad + 6) + "║"}
-            </Text>
-            <Text color={theme.planPrimary}>
-              {"║  █  █▀█ ██▄   █▀▀ █▄▄ █▀█ █ ▀█" + " ".repeat(artPad + 6) + "║"}
-            </Text>
-            <Text color={theme.planPrimary}>{"╠" + hLine("═", innerWidth + 2) + "╣"}</Text>
-            <Text color={theme.planPrimary}>
-              {"║  " + statusLine + " ".repeat(statusPad) + "  ║"}
-            </Text>
-            <Text color={theme.planPrimary}>{"╚" + hLine("═", innerWidth + 2) + "╝"}</Text>
-          </>
-        );
-      })()}
+      {/* ASCII art header — pure strings, no nested <Text> */}
+      <Text color={theme.planPrimary}>{"╔" + "═".repeat(innerWidth + 2) + "╗"}</Text>
+      <Text color={theme.planPrimary}>{frameLine(ART_LINE_1, innerWidth)}</Text>
+      <Text color={theme.planPrimary}>{frameLine(ART_LINE_2, innerWidth)}</Text>
+      <Text color={theme.planPrimary}>{"╠" + "═".repeat(innerWidth + 2) + "╣"}</Text>
+      <Text color={theme.planPrimary}>{frameLine(statusContent, innerWidth)}</Text>
+      <Text color={theme.planPrimary}>{"╚" + "═".repeat(innerWidth + 2) + "╝"}</Text>
 
       {/* Plan path */}
       <Box marginTop={1}>

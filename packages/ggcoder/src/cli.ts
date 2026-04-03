@@ -33,6 +33,7 @@ import { renderApp } from "./ui/render.js";
 import { runJsonMode } from "./modes/json-mode.js";
 import { runRpcMode } from "./modes/rpc-mode.js";
 import { runServeMode } from "./modes/serve-mode.js";
+import { runAgentHomeMode } from "./modes/agent-home-mode.js";
 import { renderLoginSelector } from "./ui/login.js";
 import { renderSessionSelector } from "./ui/sessions.js";
 import type { CompletedItem } from "./ui/App.js";
@@ -132,6 +133,8 @@ function printHelp(): void {
     ["continue", "Resume the most recent session"],
     ["serve", "Start the HTTP/WebSocket API server"],
     ["telegram", "Configure Telegram bot integration"],
+    ["agent-home-login", "Configure Agent Home relay connection"],
+    ["agent-home", "Connect to Agent Home as a remote agent"],
   ];
   for (const [name, desc] of cmds) {
     console.log(`  ${accent(name.padEnd(20))} ${dim(desc)}`);
@@ -143,7 +146,7 @@ function printHelp(): void {
   const opts: [string, string][] = [
     ["-h, --help", "Show this help message"],
     ["-v, --version", "Show version number"],
-    ["--provider <name>", "AI provider (anthropic, openai)"],
+    ["--provider <name>", "AI provider (anthropic, openai, glm, moonshot)"],
     ["--model <name>", "Model to use (e.g. claude-sonnet-4-6, gpt-4.1)"],
     ["--max-turns <n>", "Maximum agent turns per prompt"],
     ["--system-prompt <text>", "Override the system prompt"],
@@ -255,6 +258,27 @@ function main(): void {
     return;
   }
 
+  if (subcommand === "agent-home-login") {
+    runAgentHomeLogin().catch((err) => {
+      log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
+      closeLogger();
+      process.stderr.write(formatUserError(err) + "\n");
+      process.exit(1);
+    });
+    return;
+  }
+
+  if (subcommand === "agent-home") {
+    process.argv.splice(2, 1);
+    runAgentHome().catch((err) => {
+      log("ERROR", "fatal", err instanceof Error ? err.message : String(err));
+      closeLogger();
+      process.stderr.write(formatUserError(err) + "\n");
+      process.exit(1);
+    });
+    return;
+  }
+
   if (subcommand === "continue") {
     // Remove "continue" so parseArgs handles remaining flags
     process.argv.splice(2, 1);
@@ -345,7 +369,7 @@ function main(): void {
 
   function getHardcodedDefault(p: string): string {
     if (p === "openai") return "gpt-5.3-codex";
-    if (p === "glm") return "glm-5";
+    if (p === "glm") return "glm-5.1";
     if (p === "moonshot") return "kimi-k2.5";
     return "claude-opus-4-6";
   }
@@ -702,7 +726,7 @@ async function runSessions(): Promise<void> {
 
   function getDefault(p: string): string {
     if (p === "openai") return "gpt-5.3-codex";
-    if (p === "glm") return "glm-5";
+    if (p === "glm") return "glm-5.1";
     if (p === "moonshot") return "kimi-k2.5";
     return "claude-opus-4-6";
   }
@@ -955,7 +979,7 @@ async function runServe(): Promise<void> {
 
   function getDefault(p: string): string {
     if (p === "openai") return "gpt-5.3-codex";
-    if (p === "glm") return "glm-5";
+    if (p === "glm") return "glm-5.1";
     if (p === "moonshot") return "kimi-k2.5";
     return "claude-opus-4-6";
   }
@@ -979,6 +1003,194 @@ async function runServe(): Promise<void> {
     version: CLI_VERSION,
     thinkingLevel,
     telegram: { botToken, userId },
+  });
+}
+
+// ── Agent Home Setup ────────────────────────────────────
+
+interface AgentHomeConfig {
+  token: string;
+}
+
+async function loadAgentHomeConfig(): Promise<AgentHomeConfig | null> {
+  try {
+    const raw = await fs.promises.readFile(getAppPaths().agentHomeFile, "utf-8");
+    const data = JSON.parse(raw) as AgentHomeConfig;
+    if (data.token) return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveAgentHomeConfig(config: AgentHomeConfig): Promise<void> {
+  const paths = await ensureAppDirs();
+  await fs.promises.writeFile(paths.agentHomeFile, JSON.stringify(config, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+}
+
+async function runAgentHomeLogin(): Promise<void> {
+  process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+  const paths = await ensureAppDirs();
+  initLogger(paths.logFile, { version: CLI_VERSION });
+  log("INFO", "agent-home", "Agent Home login started");
+
+  const existing = await loadAgentHomeConfig();
+
+  // Banner
+  const LOGO = [
+    " \u2584\u2580\u2580\u2580 \u2584\u2580\u2580\u2580",
+    " \u2588 \u2580\u2588 \u2588 \u2580\u2588",
+    " \u2580\u2584\u2584\u2580 \u2580\u2584\u2584\u2580",
+  ];
+  function gradientTextLocal(text: string): string {
+    let colorIdx = 0;
+    return text
+      .split("")
+      .map((ch) => {
+        if (ch === " ") return ch;
+        const color = GRADIENT[colorIdx++ % GRADIENT.length]!;
+        return chalk.hex(color)(ch);
+      })
+      .join("");
+  }
+  const GAP = "   ";
+  console.log();
+  console.log(
+    `  ${gradientTextLocal(LOGO[0]!)}${GAP}` +
+      chalk.hex("#60a5fa").bold("GG Coder") +
+      chalk.hex("#6b7280")(` v${CLI_VERSION}`) +
+      chalk.hex("#6b7280")(" \u00b7 By ") +
+      chalk.white.bold("Ken Kai"),
+  );
+  console.log(`  ${gradientTextLocal(LOGO[1]!)}${GAP}` + chalk.hex("#a78bfa")("Agent Home Setup"));
+  console.log(
+    `  ${gradientTextLocal(LOGO[2]!)}${GAP}` + chalk.hex("#6b7280")("Remote Control via iOS"),
+  );
+  console.log();
+
+  if (existing) {
+    console.log(
+      chalk.hex("#6b7280")("  Current config:\n") +
+        chalk.hex("#6b7280")(
+          `    Token:  ${existing.token.slice(0, 8)}...${existing.token.slice(-4)}\n`,
+        ),
+    );
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    console.log(
+      chalk.hex("#a78bfa")("  Auth Token\n") +
+        chalk.hex("#6b7280")(
+          "    Open Agent Home iOS app \u2192 Settings \u2192 Generate SDK Token\n",
+        ) +
+        chalk.hex("#6b7280")("    Copy the token\n"),
+    );
+
+    const tokenPrompt = existing
+      ? chalk.hex("#60a5fa")("  Auth token (enter to keep current): ")
+      : chalk.hex("#60a5fa")("  Auth token: ");
+    const tokenInput = await rl.question(tokenPrompt);
+    const token = tokenInput.trim() || existing?.token;
+
+    if (!token) {
+      console.log(chalk.hex("#ef4444")("\n  No token provided. Setup cancelled."));
+      return;
+    }
+
+    // Save config
+    await saveAgentHomeConfig({ token });
+
+    log("INFO", "agent-home", `Agent Home setup complete`);
+
+    console.log(
+      chalk.hex("#4ade80")(`\n  \u2713 Token saved`) +
+        "\n" +
+        chalk.hex("#4ade80")(`  \u2713 Config saved to ${paths.agentHomeFile}`) +
+        "\n\n" +
+        chalk.hex("#60a5fa")("  To start:\n") +
+        chalk.hex("#6b7280")("    cd your-project && ggcoder agent-home\n"),
+    );
+  } finally {
+    rl.close();
+    closeLogger();
+  }
+}
+
+// ── Agent Home (Run) ────────────────────────────────────
+
+async function runAgentHome(): Promise<void> {
+  const { values: ahValues } = parseArgs({
+    options: {
+      token: { type: "string" },
+      provider: { type: "string" },
+      model: { type: "string" },
+    },
+    strict: true,
+  });
+
+  // Priority: CLI flags > saved config
+  const saved = await loadAgentHomeConfig();
+  const token = ahValues.token ?? saved?.token;
+
+  if (!token) {
+    console.error(
+      chalk.hex("#ef4444")("Agent Home not configured.\n\n") +
+        "Run " +
+        chalk.hex("#60a5fa").bold("ggcoder agent-home-login") +
+        " to set up your token.\n\n" +
+        chalk.hex("#6b7280")("Or provide manually:\n") +
+        chalk.hex("#6b7280")("  ggcoder agent-home --token TOKEN"),
+    );
+    process.exit(1);
+  }
+
+  // Load saved settings
+  let savedProvider: "anthropic" | "openai" | "glm" | "moonshot" | undefined;
+  let savedModel: string | undefined;
+  let savedThinkingEnabled = false;
+  try {
+    const raw = JSON.parse(fs.readFileSync(getAppPaths().settingsFile, "utf-8"));
+    if (raw.defaultProvider) savedProvider = raw.defaultProvider;
+    if (raw.defaultModel) savedModel = raw.defaultModel;
+    if (raw.thinkingEnabled === true) savedThinkingEnabled = true;
+  } catch {
+    // No settings file
+  }
+
+  const provider: Provider =
+    (ahValues.provider as Provider | undefined) ?? savedProvider ?? "anthropic";
+
+  function getDefault(p: string): string {
+    if (p === "openai") return "gpt-5.3-codex";
+    if (p === "glm") return "glm-5.1";
+    if (p === "moonshot") return "kimi-k2.5";
+    return "claude-opus-4-6";
+  }
+
+  const model = ahValues.model ?? savedModel ?? getDefault(provider);
+  const thinkingLevel: ThinkingLevel | undefined = savedThinkingEnabled ? "medium" : undefined;
+
+  const paths = await ensureAppDirs();
+  initLogger(paths.logFile, {
+    version: CLI_VERSION,
+    provider,
+    model,
+  });
+
+  setEstimatorModel(model);
+
+  await runAgentHomeMode({
+    provider,
+    model,
+    cwd: process.cwd(),
+    version: CLI_VERSION,
+    thinkingLevel,
+    agentHome: { token },
   });
 }
 

@@ -2,7 +2,7 @@ import type { z } from "zod";
 
 // ── Providers ──────────────────────────────────────────────
 
-export type Provider = "anthropic" | "openai" | "glm" | "moonshot";
+export type Provider = "anthropic" | "openai" | "glm" | "moonshot" | "palsu";
 
 // ── Thinking ───────────────────────────────────────────────
 
@@ -235,6 +235,9 @@ export interface StreamOptions {
   /** Enable server-side compaction (Anthropic only, beta). Automatically
    *  summarizes earlier context when approaching the context window limit. */
   compaction?: boolean;
+  /** Enable server-side clearing of old tool use/result pairs (Anthropic only, beta).
+   *  The API automatically removes older tool interactions to free context. */
+  clearToolUses?: boolean;
   /** Custom fetch implementation. Useful in non-Node environments (e.g. Expo/React Native)
    *  where the default `globalThis.fetch` doesn't support streaming properly.
    *  Passed directly to the underlying provider SDK. */

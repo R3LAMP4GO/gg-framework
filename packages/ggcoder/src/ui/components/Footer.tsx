@@ -3,6 +3,7 @@ import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { getContextWindow } from "../../core/model-registry.js";
+import { PARTIAL_BLOCKS, LIGHT_SHADE } from "../constants/figures.js";
 
 interface FooterProps {
   model: string;
@@ -36,32 +37,11 @@ function getContextPercent(model: string, tokensIn: number): number {
   return Math.round((tokensIn / limit) * 100);
 }
 
-function formatTokens(tokens: number): string {
-  if (tokens === 0) return "0";
-  if (tokens < 1000) return String(tokens);
-  if (tokens < 100_000) return (tokens / 1000).toFixed(1) + "k";
-  return Math.round(tokens / 1000) + "k";
-}
-
 function getContextColor(pct: number, theme: ReturnType<typeof useTheme>): string {
   if (pct >= 80) return theme.error;
   if (pct >= 50) return theme.warning;
   return theme.success;
 }
-
-// ── Partial block gauge ───────────────────────────────────
-
-const PARTIAL_BLOCKS = [
-  " ",
-  "\u258F",
-  "\u258E",
-  "\u258D",
-  "\u258C",
-  "\u258B",
-  "\u258A",
-  "\u2589",
-  "\u2588",
-];
 
 export function Footer({
   model,
@@ -74,18 +54,17 @@ export function Footer({
   const theme = useTheme();
   const { columns } = useTerminalSize();
 
-  // Show only last 2 path segments (project folder + immediate parent)
+  // Show only the current directory name
   const parts = cwd.split("/").filter(Boolean);
-  const displayPath = parts.length <= 2 ? cwd : parts.slice(-2).join("/");
+  const displayPath = parts.length > 0 ? parts[parts.length - 1] : cwd;
 
   const contextPct = getContextPercent(model, tokensIn);
   const contextColor = getContextColor(contextPct, theme);
   const sep = <Text color={theme.border}>{" \u2502 "}</Text>;
 
-  // Build right side segments
   const modelName = getShortModelName(model);
 
-  // Build a context bar with partial block precision (8 chars × 8 levels = 64 granularity)
+  // Context bar with partial block precision
   const barWidth = 8;
   const fillFloat = Math.min((contextPct / 100) * barWidth, barWidth);
   const barChars: React.ReactElement[] = [];
@@ -107,48 +86,55 @@ export function Footer({
     } else {
       barChars.push(
         <Text key={i} color={theme.textDim}>
-          {"\u2591"}
+          {LIGHT_SHADE}
         </Text>,
       );
     }
   }
 
-  // "Plan on" / "Plan off" + key hint (^P)
+  // Plan/Thinking labels
   const planText = planMode ? "Plan on" : "Plan off";
-
-  // "Thinking on" / "Thinking off" + key hint (⇧⇹)
   const thinkingText = thinkingEnabled ? "Thinking on" : "Thinking off";
 
-  // Calculate whether everything fits on one line.
-  // Left: path + separator + branch.  Right: tokens + bar + model + plan + thinking.
-  const leftLen = displayPath.length + 2 + (gitBranch ? gitBranch.length + 5 : 0); // 2 = paddingLeft+Right
+  // Calculate whether everything fits on one line
+  const leftLen = displayPath.length + 2 + (gitBranch ? gitBranch.length + 5 : 0);
   const rightLen =
-    formatTokens(tokensIn).length +
-    3 + // sep
     barWidth +
     1 +
     String(contextPct).length +
-    1 + // " N%"
-    3 + // sep
+    1 +
+    3 +
     modelName.length +
-    3 + // sep
+    3 +
     planText.length +
-    3 + // " ^P"
-    3 + // sep
-    thinkingText.length +
-    3; // " ⇧⇹"
-  const availableWidth = columns - 2; // paddingLeft + paddingRight
+    3 +
+    thinkingText.length;
+  const availableWidth = columns - 2;
   const fitsOnOneLine = leftLen + rightLen <= availableWidth;
 
-  // Truncate path only when single-line and it's the path that's too long
   const maxPath = fitsOnOneLine ? availableWidth - rightLen - 2 : availableWidth;
   const truncPath =
     displayPath.length > maxPath && maxPath > 10
       ? "\u2026" + displayPath.slice(displayPath.length - maxPath + 1)
       : displayPath;
 
+  // Shared right-side content
+  const rightContent = (
+    <>
+      <Text>{barChars}</Text>
+      <Text color={contextColor}> {contextPct}%</Text>
+      {sep}
+      <Text color={theme.primary} bold>
+        {modelName}
+      </Text>
+      {sep}
+      <Text color={planMode ? theme.planPrimary : theme.textDim}>{planText}</Text>
+      {sep}
+      <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
+    </>
+  );
+
   if (fitsOnOneLine) {
-    // Single-line layout: left grows, right is fixed
     return (
       <Box paddingLeft={1} paddingRight={1} width={columns}>
         <Box flexGrow={1}>
@@ -163,27 +149,12 @@ export function Footer({
             </>
           )}
         </Box>
-        <Box flexShrink={0}>
-          <Text color={theme.textDim}>{formatTokens(tokensIn)}</Text>
-          {sep}
-          <Text>{barChars}</Text>
-          <Text color={contextColor}> {contextPct}%</Text>
-          {sep}
-          <Text color={theme.primary} bold>
-            {modelName}
-          </Text>
-          {sep}
-          <Text color={planMode ? theme.planPrimary : theme.textDim}>{planText}</Text>
-          <Text color={theme.border}>{" ^P"}</Text>
-          {sep}
-          <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
-          <Text color={theme.border}>{" \u21E7\u21B9"}</Text>
-        </Box>
+        <Box flexShrink={0}>{rightContent}</Box>
       </Box>
     );
   }
 
-  // Two-line layout: wrap right-side items below the left side
+  // Two-line layout
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1} width={columns}>
       <Box>
@@ -200,22 +171,7 @@ export function Footer({
           </>
         )}
       </Box>
-      <Box>
-        <Text color={theme.textDim}>{formatTokens(tokensIn)}</Text>
-        {sep}
-        <Text>{barChars}</Text>
-        <Text color={contextColor}> {contextPct}%</Text>
-        {sep}
-        <Text color={theme.primary} bold>
-          {modelName}
-        </Text>
-        {sep}
-        <Text color={planMode ? theme.planPrimary : theme.textDim}>{planText}</Text>
-        <Text color={theme.border}>{" ^P"}</Text>
-        {sep}
-        <Text color={thinkingEnabled ? theme.accent : theme.textDim}>{thinkingText}</Text>
-        <Text color={theme.border}>{" \u21E7\u21B9"}</Text>
-      </Box>
+      <Box>{rightContent}</Box>
     </Box>
   );
 }

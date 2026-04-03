@@ -87,12 +87,14 @@ async function runStream(options: StreamOptions, result: StreamResult): Promise<
     const choice = chunk.choices?.[0];
 
     if (chunk.usage) {
-      inputTokens = chunk.usage.prompt_tokens;
       outputTokens = chunk.usage.completion_tokens;
       const details = chunk.usage.prompt_tokens_details;
       if (details?.cached_tokens) {
         cacheRead = details.cached_tokens;
       }
+      // OpenAI's prompt_tokens includes cached tokens; subtract to match
+      // Anthropic's convention where inputTokens excludes cache hits.
+      inputTokens = chunk.usage.prompt_tokens - cacheRead;
     }
 
     if (!choice) continue;

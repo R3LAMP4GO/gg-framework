@@ -11,6 +11,7 @@ interface ConnectedServer {
   name: string;
   client: Client;
   transport: StreamableHTTPClientTransport | SSEClientTransport | StdioClientTransport;
+  lastCallTime: number;
 }
 
 export class MCPClientManager {
@@ -79,7 +80,7 @@ export class MCPClientManager {
       }
     }
 
-    this.servers.push({ name: config.name, client, transport });
+    this.servers.push({ name: config.name, client, transport, lastCallTime: 0 });
 
     const { tools } = await client.listTools(undefined, { timeout });
 
@@ -91,6 +92,16 @@ export class MCPClientManager {
         parameters: z.record(z.string(), z.unknown()),
         rawInputSchema: tool.inputSchema as Record<string, unknown>,
         execute: async (args) => {
+          const server = this.servers.find((s) => s.name === config.name);
+          if (server) {
+            const elapsed = Date.now() - server.lastCallTime;
+            const minGap = 2_000;
+            if (elapsed < minGap) {
+              await new Promise((r) => setTimeout(r, minGap - elapsed));
+            }
+            server.lastCallTime = Date.now();
+          }
+
           try {
             const result = await client.callTool(
               { name: tool.name, arguments: args as Record<string, unknown> },
@@ -113,7 +124,11 @@ export class MCPClientManager {
             }
             return texts.join("\n") || "(empty response)";
           } catch (err) {
-            return `MCP tool error: ${err instanceof Error ? err.message : String(err)}`;
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("Too Many R") || msg.includes("429")) {
+              return "Rate limited — too many requests. Wait a moment before searching again.";
+            }
+            return `MCP tool error: ${msg}`;
           }
         },
       };

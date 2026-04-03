@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { truncateHead, truncateTail, MAX_LINES, MAX_CHARS } from "./truncate.js";
+import { truncateHead, truncateTail, MAX_LINES, MAX_BYTES } from "./truncate.js";
 
 describe("constants", () => {
-  it("MAX_LINES is 500", () => {
-    expect(MAX_LINES).toBe(500);
+  it("MAX_LINES is 2000", () => {
+    expect(MAX_LINES).toBe(2000);
   });
 
-  it("MAX_CHARS is 100_000", () => {
-    expect(MAX_CHARS).toBe(100_000);
+  it("MAX_BYTES is 50KB", () => {
+    expect(MAX_BYTES).toBe(50 * 1024);
   });
 });
 
@@ -30,11 +30,11 @@ describe("truncateHead", () => {
     expect(result.content).toBe("line0\nline1\nline2\nline3\nline4");
   });
 
-  it("content over maxChars gets truncated by char limit", () => {
-    // Each line is 10 chars + 1 newline = 11 bytes per line
+  it("content over maxBytes gets truncated by byte limit", () => {
+    // Each line is 10 bytes + 1 newline = 11 bytes per line
     const lines = Array.from({ length: 20 }, () => "abcdefghij");
     const content = lines.join("\n");
-    // maxChars = 55 means ~5 lines worth (5 * 11 = 55)
+    // maxBytes = 55 means ~5 lines worth (5 * 11 = 55)
     const result = truncateHead(content, 100, 55);
     expect(result.truncated).toBe(true);
     expect(result.keptLines).toBe(5);
@@ -83,11 +83,11 @@ describe("truncateTail", () => {
     expect(result.content).toBe("line5\nline6\nline7\nline8\nline9");
   });
 
-  it("content over maxChars keeps last N chars worth", () => {
-    // Each line is 10 chars + 1 newline = 11 bytes per line
+  it("content over maxBytes keeps last N bytes worth", () => {
+    // Each line is 10 bytes + 1 newline = 11 bytes per line
     const lines = Array.from({ length: 20 }, () => "abcdefghij");
     const content = lines.join("\n");
-    // maxChars = 55 means ~5 lines worth (5 * 11 = 55)
+    // maxBytes = 55 means ~5 lines worth (5 * 11 = 55)
     const result = truncateTail(content, 100, 55);
     expect(result.truncated).toBe(true);
     expect(result.keptLines).toBe(5);

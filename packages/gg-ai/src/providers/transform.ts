@@ -74,6 +74,10 @@ export function toAnthropicMessages(
                 // Strip thinking blocks without a valid signature (e.g. from GLM/OpenAI)
                 // — Anthropic rejects empty signatures
                 if (part.type === "thinking" && !part.signature) return false;
+                // Strip empty text blocks — Anthropic rejects text content blocks
+                // with empty strings (can happen when the model returns tool_use
+                // with an empty companion text block)
+                if (part.type === "text" && !part.text) return false;
                 return true;
               })
               .map((part): Anthropic.ContentBlockParam => {
@@ -97,9 +101,11 @@ export function toAnthropicMessages(
                 if (part.type === "server_tool_result")
                   return part.data as unknown as Anthropic.ContentBlockParam;
                 if (part.type === "raw") return part.data as unknown as Anthropic.ContentBlockParam;
-                // image content shouldn't appear in assistant messages
-                return { type: "text", text: "" };
-              });
+                // Unknown content type (e.g. image in assistant message) — skip
+                // by returning a marker that will be filtered out below
+                return null as unknown as Anthropic.ContentBlockParam;
+              })
+              .filter(Boolean);
       out.push({ role: "assistant", content });
       continue;
     }

@@ -22,7 +22,7 @@ function formatThinkingDuration(ms: number): string {
 const ACCENT_COLOR = "#818cf8";
 const BORDER_COLOR = "#4b5563";
 
-export function ThinkingBlock({
+export const ThinkingBlock = React.memo(function ThinkingBlock({
   text,
   durationMs,
   streaming = false,
@@ -88,4 +88,4 @@ export function ThinkingBlock({
       )}
     </Box>
   );
-}
+});

@@ -43,7 +43,8 @@ export async function buildSystemPrompt(
       `- If the project needs to be rebuilt for changes to take effect, rebuild it.\n` +
       `- If a dev server is running and needs restarting, ask the user before killing processes.\n` +
       `- If tool results show wiring warnings, fix them before continuing.\n` +
-      `- Re-read complex edits to catch mistakes before reporting done.\n\n` +
+      `- Re-read complex edits to catch mistakes before reporting done.\n` +
+      `- **Just do it** — if the next logical step is running a command, building, migrating, or seeding data, do it yourself. Don't tell the user to run it and don't ask permission for routine follow-up actions.\n\n` +
       `### Safety\n` +
       `- **Ask before destructive actions**: deleting files/directories, force-pushing, dropping data, killing processes, or overwriting uncommitted work.\n` +
       `- Don't use \`--force\`, \`--hard\`, or \`rm -rf\` without user confirmation.\n` +
@@ -57,14 +58,27 @@ export async function buildSystemPrompt(
         `You are in PLAN MODE. Research and design an implementation plan before writing any code.\n\n` +
         `### Workflow\n` +
         `1. Explore: Use read, grep, find, ls to understand the codebase\n` +
-        `2. Research: Use web_fetch for documentation and best practices\n` +
+        `2. Research: Use web_fetch for documentation and mcp__grep__searchGitHub to verify patterns against real codebases\n` +
         `3. Draft: Write a structured plan to .gg/plans/<name>.md\n` +
         `4. Submit: Call exit_plan with the plan path for user review\n\n` +
         `### Rules\n` +
         `- DO NOT use bash, edit, write (except to .gg/plans/), or subagent — they are restricted\n` +
         `- Be specific: list exact file paths, function names, line numbers\n` +
-        `- Include step-by-step implementation order with dependencies\n` +
-        `- Note risks and verification criteria`,
+        `- Note risks and verification criteria\n\n` +
+        `### Plan Format\n` +
+        `Your plan can have any structure (phases, analysis, notes, etc.) but it MUST end ` +
+        `with a section titled exactly \`## Steps\` containing a single flat numbered list of ` +
+        `implementation steps. This section is parsed by the progress widget — it is the ONLY ` +
+        `source of truth for step tracking. Do NOT put numbered lists elsewhere in the plan. ` +
+        `Use bullets or sub-headings for other sections.\n\n` +
+        `Example:\n` +
+        "```\n" +
+        `## Steps\n` +
+        `1. Create protocol types package with shared interfaces\n` +
+        `2. Set up monorepo with pnpm workspaces\n` +
+        `3. Migrate Expo Router to file-based routing\n` +
+        `...\n` +
+        "```",
     );
   }
 
@@ -85,7 +99,12 @@ export async function buildSystemPrompt(
           `### Rules\n` +
           `- Follow the plan's step-by-step implementation order\n` +
           `- Do not deviate from the plan without user confirmation\n` +
-          `- If you encounter issues not covered by the plan, ask the user`,
+          `- If you encounter issues not covered by the plan, ask the user\n\n` +
+          `### Progress Tracking\n` +
+          `After completing each step from the plan's \`## Steps\` section, output \`[DONE:n]\` ` +
+          `(e.g. \`[DONE:1]\`, \`[DONE:2]\`) in your response to mark it as complete. ` +
+          `The step numbers correspond to the numbered list in the \`## Steps\` section. ` +
+          `This updates the progress widget shown to the user.`,
       );
     }
   }
@@ -120,7 +139,8 @@ export async function buildSystemPrompt(
       `- Never create parallel "New" prefixed functions — replace originals directly.\n` +
       `- Don't add features, error handling, or abstractions beyond what was asked. A bug fix doesn't need surrounding code cleaned up.\n` +
       `- If tool results show wiring warnings or type errors, fix them before continuing.\n` +
-      `- Use ts_inspect for type info: \`ts_inspect diagnostics\` for type errors, \`ts_inspect hover\` for type info at a position, \`ts_inspect definition\` for go-to-definition.`,
+      `- Use ts_inspect for type info: \`ts_inspect diagnostics\` for type errors, \`ts_inspect hover\` for type info at a position, \`ts_inspect definition\` for go-to-definition.\n` +
+      `- **Verify non-trivial implementations** — when using unfamiliar APIs, libraries, or complex patterns, use \`mcp__grep__searchGitHub\` to check how real codebases do it before writing or during planning. Skip this for simple edits, renames, and config changes.`,
   );
 
   // 4. Tools
@@ -141,7 +161,10 @@ export async function buildSystemPrompt(
       `  - **prompt**: Standalone instruction sent to an agent with NO prior context. The agent must complete it from the prompt alone, so include specific file paths, what to change, and enough context to act without ambiguity. Be as long as needed for clarity, but no longer. If the task requires latest docs or APIs, tell the agent to research/fetch them.\n` +
       `  - **Ordering**: When creating multiple tasks (e.g. from a PRD or spec), add them in correct dependency order — foundational work first (types, schemas, config), then core logic, then integration, then UI, then tests. Each task should be completable independently given that prior tasks are done. Think like an engineer planning a project: what must exist before the next piece can be built?\n` +
       `- **skill**: Invoke a skill by name to get specialized instructions for a task. Skills are defined in \`.gg/skills/\` as markdown files. Use this tool when a task matches an available skill.\n` +
-      `- **mcp__grep__searchGitHub**: Search real-world code across 1M+ public GitHub repos. Use to verify your implementation against production patterns — check correct API usage, library idioms, and common conventions before finalizing changes. Search for literal code patterns (e.g. \`StreamableHTTPClientTransport(\`, \`useEffect(() =>\`), not keywords.\n` +
+      `- **mcp__grep__searchGitHub**: Search real-world code across 1M+ public GitHub repos. Use to verify implementations against production patterns.\n` +
+      `  - **Query must be a single literal code snippet** that would appear verbatim in a source file (e.g. \`setFrame(CGRect(\`, \`useEffect(() =>\`, \`StreamableHTTPClientTransport(\`).\n` +
+      `  - **Never combine multiple identifiers** — \`clipsToBounds panel setFrame\` will match nothing. Pick the most specific single pattern.\n` +
+      `  - **One call at a time** — this API is rate-limited. Do not fire parallel/concurrent searchGitHub calls. Run them sequentially.\n` +
       `- **enter_plan**: For complex multi-file tasks, call enter_plan to switch to plan mode for safe read-only exploration and planning.\n` +
       `- **exit_plan**: Submit your plan for user review and exit plan mode.`,
   );
@@ -153,13 +176,16 @@ export async function buildSystemPrompt(
       `- Don't generate stubs or placeholder implementations unless asked.\n` +
       `- Don't add TODOs for yourself — finish the work or state what's incomplete.\n` +
       `- Don't pad responses with filler or repeat back what the user said.\n` +
-      `- Don't guess or make up file paths, function names, API methods, CLI flags, config options, or package versions. If unsure, use \`find\`, \`grep\`, \`web_fetch\`, or \`--help\` to verify.`,
+      `- Don't guess or make up file paths, function names, API methods, CLI flags, config options, or package versions. If unsure, use \`find\`, \`grep\`, \`web_fetch\`, \`mcp__grep__searchGitHub\`, or \`--help\` to verify.`,
   );
 
   // 6. Response Format
   sections.push(
     `## Response Format\n\n` +
-      `Keep responses short and concise. Summarize what you did, then tell the user what to do next if applicable. For pure questions, answer directly.`,
+      `- **Plain language** — most users are not deeply technical. Explain what you did and why in simple terms, not implementation jargon.\n` +
+      `- **Short and direct** — a few sentences, not paragraphs. No rambling, no filler, no repeating back what the user said.\n` +
+      `- **Next steps** — if the user needs to do something (test, review, decide), say so briefly. If not, don't pad.\n` +
+      `- For pure questions, answer directly.`,
   );
 
   // 7. Project context — walk from cwd to root looking for context files

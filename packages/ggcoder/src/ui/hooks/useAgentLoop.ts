@@ -73,7 +73,14 @@ export interface AgentLoopOptions {
   ) => Message[] | Promise<Message[]>;
 }
 
-export type ActivityPhase = "waiting" | "thinking" | "generating" | "tools" | "idle";
+export type ActivityPhase = "waiting" | "thinking" | "generating" | "tools" | "retrying" | "idle";
+
+export interface RetryInfo {
+  reason: "overloaded" | "rate_limit" | "empty_response" | "context_overflow" | "stream_stall";
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+}
 
 export type UserContent = string | (TextContent | ImageContent)[];
 
@@ -96,10 +103,16 @@ export interface UseAgentLoopReturn {
   /** Latest turn's input tokens — reflects current context window usage */
   contextUsed: number;
   activityPhase: ActivityPhase;
+  retryInfo: RetryInfo | null;
   elapsedMs: number;
   thinkingMs: number;
   isThinking: boolean;
   streamedTokenEstimate: number;
+  /** Raw character count ref — read directly by ActivityIndicator for smooth animation */
+  charCountRef: React.RefObject<number>;
+  /** Accumulated real tokens from completed turns */
+  realTokensAccumRef: React.RefObject<number>;
+  linesChanged: { added: number; removed: number };
 }
 
 export function useAgentLoop(
@@ -159,22 +172,20 @@ export function useAgentLoop(
   const [thinkingMs, setThinkingMs] = useState(0);
   const [isThinking, setIsThinking] = useState(false);
   const [streamedTokenEstimate, setStreamedTokenEstimate] = useState(0);
+  const [retryInfo, setRetryInfo] = useState<RetryInfo | null>(null);
+  const [linesChanged, setLinesChanged] = useState({ added: 0, removed: 0 });
 
   const abortRef = useRef<AbortController | null>(null);
   const queueRef = useRef<UserContent[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const activeToolCallsRef = useRef<ActiveToolCall[]>([]);
-  const textPendingRef = useRef("");
   const textVisibleRef = useRef("");
   const thinkingBufferRef = useRef("");
-  const thinkingPendingRef = useRef("");
   const thinkingVisibleRef = useRef("");
-  const thinkingRevealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runStartRef = useRef(0);
   const toolsUsedRef = useRef<Set<string>>(new Set());
   const editedFilesRef = useRef<Set<string>>(new Set());
   const verificationGateRef = useRef(new VerificationGate(process.cwd()));
-  const revealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<ActivityPhase>("idle");
   const thinkingStartRef = useRef<number | null>(null);
   const thinkingAccumRef = useRef(0);
@@ -182,121 +193,6 @@ export function useAgentLoop(
   const realTokensAccumRef = useRef(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneCalledRef = useRef(false);
-
-  const stopReveal = useCallback(() => {
-    if (revealTimerRef.current) {
-      clearInterval(revealTimerRef.current);
-      revealTimerRef.current = null;
-    }
-  }, []);
-
-  const emptyTicksRef = useRef(0);
-
-  const startReveal = useCallback(() => {
-    if (revealTimerRef.current) return;
-    emptyTicksRef.current = 0;
-    revealTimerRef.current = setInterval(() => {
-      const pending = textPendingRef.current;
-      if (pending.length === 0) {
-        // Auto-stop after 3 empty ticks to avoid unnecessary re-renders
-        emptyTicksRef.current++;
-        if (emptyTicksRef.current >= 3) {
-          stopReveal();
-        }
-        return;
-      }
-      emptyTicksRef.current = 0;
-
-      // Adaptive speed: continuous interpolation prevents jarring speed
-      // jumps at tier boundaries. Clamped to [12, 180] chars/tick at
-      // 33ms (~30fps) to balance smoothness vs catch-up speed.
-      const buffered = pending.length;
-      const charsPerTick = Math.max(12, Math.min(180, Math.ceil(buffered * 0.35)));
-
-      // Snap to a word boundary when possible so partial words don't
-      // flash on screen. Look back up to 20 chars for a natural break.
-      let endIndex = Math.min(charsPerTick, buffered);
-      if (endIndex < buffered) {
-        const breakChars = " \n.,;:`')]}>";
-        for (let i = endIndex; i >= Math.max(1, endIndex - 20); i--) {
-          if (breakChars.includes(pending[i])) {
-            endIndex = i + 1;
-            break;
-          }
-        }
-      }
-
-      const reveal = pending.slice(0, endIndex);
-      textPendingRef.current = pending.slice(endIndex);
-      textVisibleRef.current += reveal;
-      setStreamingText(textVisibleRef.current);
-    }, 33);
-  }, [stopReveal]);
-
-  // ── Thinking reveal (throttled like text reveal) ──────────
-  // Without this, every thinking_delta event triggers setStreamingThinking
-  // immediately, causing rapid live-area height changes as text wraps to
-  // new lines — which makes Ink's cursor math misalign and the viewport jump.
-  const thinkingEmptyTicksRef = useRef(0);
-
-  const stopThinkingReveal = useCallback(() => {
-    if (thinkingRevealTimerRef.current) {
-      clearInterval(thinkingRevealTimerRef.current);
-      thinkingRevealTimerRef.current = null;
-    }
-  }, []);
-
-  const startThinkingReveal = useCallback(() => {
-    if (thinkingRevealTimerRef.current) return;
-    thinkingEmptyTicksRef.current = 0;
-    thinkingRevealTimerRef.current = setInterval(() => {
-      const pending = thinkingPendingRef.current;
-      if (pending.length === 0) {
-        thinkingEmptyTicksRef.current++;
-        if (thinkingEmptyTicksRef.current >= 3) {
-          stopThinkingReveal();
-        }
-        return;
-      }
-      thinkingEmptyTicksRef.current = 0;
-
-      // Larger chunks than text reveal — thinking text is dimmed/secondary
-      // so smooth animation matters less than keeping re-renders low.
-      const buffered = pending.length;
-      const charsPerTick = Math.max(20, Math.min(300, Math.ceil(buffered * 0.4)));
-
-      let endIndex = Math.min(charsPerTick, buffered);
-      if (endIndex < buffered) {
-        const breakChars = " \n.,;:`')]}>";
-        for (let i = endIndex; i >= Math.max(1, endIndex - 20); i--) {
-          if (breakChars.includes(pending[i])) {
-            endIndex = i + 1;
-            break;
-          }
-        }
-      }
-
-      const reveal = pending.slice(0, endIndex);
-      thinkingPendingRef.current = pending.slice(endIndex);
-      thinkingVisibleRef.current += reveal;
-      setStreamingThinking(thinkingVisibleRef.current);
-    }, 33);
-  }, [stopThinkingReveal]);
-
-  const flushAllText = useCallback(() => {
-    stopReveal();
-    stopThinkingReveal();
-    if (textPendingRef.current.length > 0) {
-      textVisibleRef.current += textPendingRef.current;
-      textPendingRef.current = "";
-    }
-    if (thinkingPendingRef.current.length > 0) {
-      thinkingVisibleRef.current += thinkingPendingRef.current;
-      thinkingPendingRef.current = "";
-    }
-    setStreamingText(textVisibleRef.current);
-    setStreamingThinking(thinkingVisibleRef.current);
-  }, [stopReveal, stopThinkingReveal]);
 
   const abort = useCallback(() => {
     abortRef.current?.abort();
@@ -338,10 +234,8 @@ export function useAgentLoop(
 
         // Reset state
         doneCalledRef.current = false;
-        textPendingRef.current = "";
         textVisibleRef.current = "";
         thinkingBufferRef.current = "";
-        thinkingPendingRef.current = "";
         thinkingVisibleRef.current = "";
         runStartRef.current = Date.now();
         toolsUsedRef.current = new Set();
@@ -452,16 +346,20 @@ export function useAgentLoop(
 
               return msgs.length > 0 ? msgs : null;
             },
+            // clearToolUses disabled — causes model to output unsolicited context
+            // summaries ("KEY CONTEXT TO REMEMBER") when it sees gaps from stripped
+            // tool blocks. Normal client-side compaction handles context management.
           });
 
           for await (const event of generator as AsyncIterable<AgentEvent>) {
             switch (event.type) {
               case "text_delta":
-                textPendingRef.current += event.text;
+                textVisibleRef.current += event.text;
                 charCountRef.current += event.text.length;
-                startReveal();
+                setStreamingText(textVisibleRef.current);
                 if (phaseRef.current !== "generating") {
                   freezeThinking();
+                  if (phaseRef.current === "retrying") setRetryInfo(null);
                   phaseRef.current = "generating";
                   setActivityPhase("generating");
                 }
@@ -469,12 +367,13 @@ export function useAgentLoop(
 
               case "thinking_delta":
                 thinkingBufferRef.current += event.text;
-                thinkingPendingRef.current += event.text;
+                thinkingVisibleRef.current += event.text;
                 charCountRef.current += event.text.length;
-                startThinkingReveal();
+                setStreamingThinking(thinkingVisibleRef.current);
                 if (phaseRef.current !== "thinking") {
                   thinkingStartRef.current = Date.now();
                   setIsThinking(true);
+                  if (phaseRef.current === "retrying") setRetryInfo(null);
                   phaseRef.current = "thinking";
                   setActivityPhase("thinking");
                 }
@@ -553,6 +452,19 @@ export function useAgentLoop(
                   verificationGateRef.current.recordBashCommand(tc.args.command);
                 }
                 verificationGateRef.current.recordToolResult(event.result, event.isError);
+                // Track lines changed for edit tools
+                if (toolName === "edit" && !event.isError) {
+                  const diff =
+                    (event.details as { diff?: string } | undefined)?.diff ?? event.result;
+                  const addedLines = (diff.match(/^\+[^+]/gm) ?? []).length;
+                  const removedLines = (diff.match(/^-[^-]/gm) ?? []).length;
+                  if (addedLines > 0 || removedLines > 0) {
+                    setLinesChanged((prev) => ({
+                      added: prev.added + addedLines,
+                      removed: prev.removed + removedLines,
+                    }));
+                  }
+                }
                 activeToolCallsRef.current = activeToolCallsRef.current.filter(
                   (t) => t.toolCallId !== event.toolCallId,
                 );
@@ -573,20 +485,36 @@ export function useAgentLoop(
                 // onQueuedStart inside getSteeringMessages callback.
                 break;
 
-              case "turn_end":
+              case "retry":
+                phaseRef.current = "retrying";
+                setActivityPhase("retrying");
+                setRetryInfo({
+                  reason: event.reason,
+                  attempt: event.attempt,
+                  maxAttempts: event.maxAttempts,
+                  delayMs: event.delayMs,
+                });
+                break;
+
+              case "turn_end": {
+                setRetryInfo(null);
                 onTurnEnd?.(event.turn, event.stopReason, event.usage);
                 setCurrentTurn(event.turn);
                 setTotalTokens((prev) => ({
                   input: prev.input + event.usage.inputTokens,
                   output: prev.output + event.usage.outputTokens,
                 }));
-                // Latest turn's input tokens = current context window fill
-                // With prompt caching, input_tokens only counts non-cached tokens.
-                // Total context = input + cache_read + cache_write.
-                setContextUsed(
+                // Total input context = uncached + cache_read + cache_write.
+                // Anthropic has separate input/output limits, so only count input.
+                // OpenAI/GLM/Moonshot share the context window, so include output.
+                const inputContext =
                   event.usage.inputTokens +
-                    (event.usage.cacheRead ?? 0) +
-                    (event.usage.cacheWrite ?? 0),
+                  (event.usage.cacheRead ?? 0) +
+                  (event.usage.cacheWrite ?? 0);
+                setContextUsed(
+                  options.provider === "anthropic"
+                    ? inputContext
+                    : inputContext + event.usage.outputTokens,
                 );
                 // Replace char-based estimate with real output tokens
                 realTokensAccumRef.current += event.usage.outputTokens;
@@ -595,8 +523,6 @@ export function useAgentLoop(
                 // Reset phase for next turn
                 phaseRef.current = "waiting";
                 setActivityPhase("waiting");
-                // Flush all pending text before completing turn
-                flushAllText();
                 if (textVisibleRef.current) {
                   onTurnText?.(
                     textVisibleRef.current,
@@ -605,17 +531,15 @@ export function useAgentLoop(
                   );
                 }
                 // Reset streaming buffers for next turn
-                textPendingRef.current = "";
                 textVisibleRef.current = "";
                 thinkingBufferRef.current = "";
-                thinkingPendingRef.current = "";
                 thinkingVisibleRef.current = "";
                 setStreamingText("");
                 setStreamingThinking("");
                 break;
+              }
 
               case "agent_done":
-                flushAllText();
                 // Batch ALL completion state into a single render so Ink
                 // processes the live-area change atomically.  Previously
                 // isRunning, activityPhase, and onDone landed in separate
@@ -647,8 +571,6 @@ export function useAgentLoop(
           }
           setIsRunning(false);
           abortRef.current = null;
-          stopReveal();
-          stopThinkingReveal();
           if (elapsedTimerRef.current) {
             clearInterval(elapsedTimerRef.current);
             elapsedTimerRef.current = null;
@@ -657,10 +579,6 @@ export function useAgentLoop(
           setActivityPhase("idle");
 
           if (wasAborted) {
-            // Flush any visible streaming text so onAborted (which adds
-            // "Request was stopped.") lands AFTER the agent's partial text
-            // in liveItems — not above it.
-            flushAllText();
             if (textVisibleRef.current) {
               onTurnText?.(
                 textVisibleRef.current,
@@ -668,10 +586,8 @@ export function useAgentLoop(
                 thinkingAccumRef.current,
               );
             }
-            textPendingRef.current = "";
             textVisibleRef.current = "";
             thinkingBufferRef.current = "";
-            thinkingPendingRef.current = "";
             thinkingVisibleRef.current = "";
             setStreamingText("");
             setStreamingThinking("");
@@ -720,26 +636,19 @@ export function useAgentLoop(
       onDone,
       onAborted,
       onQueuedStart,
-      startReveal,
-      stopReveal,
-      startThinkingReveal,
-      stopThinkingReveal,
-      flushAllText,
     ],
   );
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopReveal();
-      stopThinkingReveal();
       abortRef.current?.abort();
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
     };
-  }, [stopReveal, stopThinkingReveal]);
+  }, []);
 
   return {
     run,
@@ -756,9 +665,13 @@ export function useAgentLoop(
     totalTokens,
     contextUsed,
     activityPhase,
+    retryInfo,
     elapsedMs,
     thinkingMs,
     isThinking,
     streamedTokenEstimate,
+    charCountRef,
+    realTokensAccumRef,
+    linesChanged,
   };
 }

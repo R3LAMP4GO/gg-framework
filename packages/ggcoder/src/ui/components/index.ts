@@ -1,4 +1,9 @@
-export { AnimationProvider, useAnimationTick, deriveFrame } from "./AnimationContext.js";
+export {
+  AnimationProvider,
+  useAnimationTick,
+  useAnimationActive,
+  deriveFrame,
+} from "./AnimationContext.js";
 export { Spinner } from "./Spinner.js";
 export { UserMessage } from "./UserMessage.js";
 export { AssistantMessage } from "./AssistantMessage.js";

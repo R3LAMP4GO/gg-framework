@@ -83,6 +83,14 @@ export interface AgentDoneEvent {
   totalUsage: Usage;
 }
 
+export interface AgentRetryEvent {
+  type: "retry";
+  reason: "overloaded" | "rate_limit" | "empty_response" | "context_overflow" | "stream_stall";
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+}
+
 export interface AgentErrorEvent {
   type: "error";
   error: Error;
@@ -107,6 +115,11 @@ export interface AgentSteeringMessageEvent {
   content: Message["content"];
 }
 
+export interface AgentFollowUpMessageEvent {
+  type: "follow_up_message";
+  content: Message["content"];
+}
+
 export type AgentEvent =
   | AgentTextDeltaEvent
   | AgentThinkingDeltaEvent
@@ -116,6 +129,8 @@ export type AgentEvent =
   | AgentServerToolCallEvent
   | AgentServerToolResultEvent
   | AgentSteeringMessageEvent
+  | AgentFollowUpMessageEvent
+  | AgentRetryEvent
   | AgentTurnEndEvent
   | AgentDoneEvent
   | AgentErrorEvent;
@@ -141,6 +156,10 @@ export interface AgentOptions {
   webSearch?: boolean;
   /** Enable server-side compaction (Anthropic only, beta). */
   compaction?: boolean;
+  /** Enable server-side clearing of old tool use/result pairs (Anthropic only, beta). */
+  clearToolUses?: boolean;
+  /** Max characters for a single tool result. Results exceeding this are truncated with a notice. */
+  maxToolResultChars?: number;
   /** Max consecutive pause_turn continuations before stopping (default: 5).
    *  Prevents infinite loops when server-side tools keep pausing. */
   maxContinuations?: number;
@@ -163,6 +182,14 @@ export interface AgentOptions {
    * on read.
    */
   getSteeringMessages?: () => Promise<Message[] | null> | Message[] | null;
+  /**
+   * Polled when the agent would otherwise stop (no tool calls, no steering).
+   * Returns messages to inject and continue the loop. Lower priority than
+   * steering — only checked after getSteeringMessages returns empty.
+   * Return null/empty to inject nothing. Messages are consumed (cleared)
+   * on read.
+   */
+  getFollowUpMessages?: () => Promise<Message[] | null> | Message[] | null;
 }
 
 // ── Agent Result ────────────────────────────────────────────

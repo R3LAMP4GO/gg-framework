@@ -25,9 +25,11 @@ describe("createEditTool", () => {
       { signal: new AbortController().signal, toolCallId: "test-1" },
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("-hello world");
-    expect(result).toContain("+goodbye world");
+    expect(typeof result).toBe("object");
+    const { content, details } = result as { content: string; details: { diff: string } };
+    expect(content).toContain("Successfully replaced text");
+    expect(details.diff).toContain("-hello world");
+    expect(details.diff).toContain("+goodbye world");
 
     const written = await fs.readFile(filePath, "utf-8");
     expect(written).toBe("goodbye world\n");
@@ -79,8 +81,9 @@ describe("createEditTool", () => {
       { signal: new AbortController().signal, toolCallId: "test-4" },
     );
 
-    expect(result).toContain("-alpha beta");
-    expect(result).toContain("+gamma beta");
+    const { details: d2 } = result as { content: string; details: { diff: string } };
+    expect(d2.diff).toContain("-alpha beta");
+    expect(d2.diff).toContain("+gamma beta");
 
     const written = await fs.readFile(filePath, "utf-8");
     expect(written).toBe("gamma beta\n");
@@ -130,8 +133,9 @@ describe("createEditTool", () => {
       { signal: new AbortController().signal, toolCallId: "test-7" },
     );
 
-    expect(typeof result).toBe("string");
-    expect(result).toContain("+const msg = 'goodbye';");
+    expect(typeof result).toBe("object");
+    const { details: d3 } = result as { content: string; details: { diff: string } };
+    expect(d3.diff).toContain("+const msg = 'goodbye';");
 
     const written = await fs.readFile(filePath, "utf-8");
     expect(written).toContain("goodbye");
@@ -147,7 +151,8 @@ describe("createEditTool", () => {
       { signal: new AbortController().signal, toolCallId: "test-8" },
     );
 
-    expect(result).toContain("+line TWO");
+    const { details: d4 } = result as { content: string; details: { diff: string } };
+    expect(d4.diff).toContain("+line TWO");
 
     const written = await fs.readFile(filePath, "utf-8");
     expect(written).toBe("line one\r\nline TWO\r\nline three\r\n");

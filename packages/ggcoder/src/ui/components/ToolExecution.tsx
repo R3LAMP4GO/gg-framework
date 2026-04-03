@@ -2,15 +2,19 @@ import React, { memo } from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { Spinner } from "./Spinner.js";
+import { ToolUseLoader } from "./ToolUseLoader.js";
+import { MessageResponse } from "./MessageResponse.js";
 import { highlightCode, langFromPath } from "../utils/highlight.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
+import { computeWordDiff, type WordSegment } from "../utils/word-diff.js";
+import { DASHED_H } from "../constants/figures.js";
 
 const MAX_OUTPUT_LINES = 4; // max lines shown per tool result
 
-// "⏺ " prefix = 2 chars
+// ToolUseLoader minWidth={2} = 2 chars
 const HEADER_PREFIX = 2;
-// Body is indented paddingLeft={2} + "⎿  " or "   " = 3 chars
-const BODY_PREFIX = 5;
+// MessageResponse gutter: "  ⎿  " = 6 chars
+const BODY_PREFIX = 6;
 
 /** Truncate a line so it fits within ~1 terminal row. */
 function truncateLine(line: string, cols: number, reservedChars = 6): string {
@@ -30,6 +34,7 @@ interface ToolDoneProps {
   args: Record<string, unknown>;
   result: string;
   isError: boolean;
+  details?: unknown;
 }
 
 type ToolExecutionProps = ToolRunningProps | ToolDoneProps;
@@ -42,24 +47,30 @@ export function ToolExecution(props: ToolExecutionProps) {
   const { columns } = useTerminalSize();
 
   if (props.status === "running") {
-    // Compact tools get a summary label while running
+    // Compact tools get a blinking dot + summary label
     if (COMPACT_TOOLS.has(props.name)) {
       const summary = getCompactRunningLabel(props.name, props.args);
       return (
-        <Box marginTop={1}>
-          <Spinner label={`${summary} (ctrl+o to expand)`} />
+        <Box marginTop={1} flexDirection="row">
+          <ToolUseLoader status="running" />
+          <Text color={theme.toolName} bold>
+            {summary}
+          </Text>
+          <Text color={theme.textDim}>{" (ctrl+o to expand)"}</Text>
         </Box>
       );
     }
+    // Non-compact tools keep the sparkle spinner with a blinking dot prefix
     const { label, detail } = getToolHeaderParts(props.name, props.args);
     return (
-      <Box marginTop={1}>
+      <Box marginTop={1} flexDirection="row">
+        <ToolUseLoader status="running" />
         <Spinner label={detail ? `${label}(${detail})` : label} />
       </Box>
     );
   }
 
-  const { name, args, result, isError } = props;
+  const { name, args, result, isError, details } = props;
   const headerContentWidth = Math.max(10, columns - HEADER_PREFIX);
   const bodyContentWidth = Math.max(10, columns - BODY_PREFIX);
 
@@ -68,9 +79,7 @@ export function ToolExecution(props: ToolExecutionProps) {
     const summary = getCompactDoneLabel(name, args, result);
     return (
       <Box marginTop={1} flexDirection="row">
-        <Box width={HEADER_PREFIX} flexShrink={0}>
-          <Text color={theme.primary}>{"⏺ "}</Text>
-        </Box>
+        <ToolUseLoader status="done" />
         <Box flexGrow={1} width={headerContentWidth}>
           <Text bold color={theme.toolName} wrap="wrap">
             {summary}
@@ -80,11 +89,14 @@ export function ToolExecution(props: ToolExecutionProps) {
     );
   }
 
-  const isDiff = name === "edit" && !isError && result.includes("---");
+  // Extract diff from details (structured result) or fall back to result string
+  const editDetails = details as { diff?: string } | undefined;
+  const diffText = editDetails?.diff ?? (result.includes("---") ? result : undefined);
+  const isDiff = name === "edit" && !isError && !!diffText;
 
   const { label, detail } = getToolHeaderParts(name, args);
   const body = isDiff
-    ? buildDiffBody(result, args, columns)
+    ? buildDiffBody(diffText!, args, columns)
     : buildResultBody(name, result, isError, columns);
 
   const headerColor = isError ? theme.toolError : theme.toolName;
@@ -94,9 +106,7 @@ export function ToolExecution(props: ToolExecutionProps) {
     const inline = getInlineSummary(name, result, isError);
     return (
       <Box marginTop={1} flexDirection="row">
-        <Box width={HEADER_PREFIX} flexShrink={0}>
-          <Text color={theme.primary}>{"⏺ "}</Text>
-        </Box>
+        <ToolUseLoader status={isError ? "error" : "done"} />
         <Box flexGrow={1} width={headerContentWidth}>
           <Text wrap="wrap">
             <Text bold color={headerColor}>
@@ -121,11 +131,9 @@ export function ToolExecution(props: ToolExecutionProps) {
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* Header: fixed prefix + wrapping content */}
+      {/* Header: status dot + wrapping content */}
       <Box flexDirection="row">
-        <Box width={HEADER_PREFIX} flexShrink={0}>
-          <Text color={theme.primary}>{"⏺ "}</Text>
-        </Box>
+        <ToolUseLoader status={isError ? "error" : "done"} />
         <Box flexGrow={1} width={headerContentWidth}>
           <Text wrap="wrap">
             <Text bold color={headerColor}>
@@ -141,28 +149,23 @@ export function ToolExecution(props: ToolExecutionProps) {
           </Text>
         </Box>
       </Box>
-      {/* Body with ⎿ connector: fixed prefix + wrapping content */}
-      <Box flexDirection="column" paddingLeft={2}>
-        {lines.map((line, i) => (
-          <Box key={i} flexDirection="row">
-            <Box width={3} flexShrink={0}>
-              <Text color={theme.textDim}>{i === 0 ? "⎿  " : "   "}</Text>
-            </Box>
-            <Box flexGrow={1} width={bodyContentWidth}>
+      {/* Body with ⎿ bracket via MessageResponse */}
+      <MessageResponse>
+        <Box flexDirection="column">
+          {lines.map((line, i) => (
+            <Box key={i} flexGrow={1} width={bodyContentWidth}>
               {line}
             </Box>
-          </Box>
-        ))}
-        {hiddenCount > 0 && (
-          <Box>
+          ))}
+          {hiddenCount > 0 && (
             <Text color={theme.textDim} wrap="wrap">
-              {"   … +"}
+              {"… +"}
               {hiddenCount}
               {" lines (ctrl+o to expand)"}
             </Text>
-          </Box>
-        )}
-      </Box>
+          )}
+        </Box>
+      </MessageResponse>
     </Box>
   );
 }
@@ -268,17 +271,9 @@ function getToolHeaderParts(
     }
     default: {
       if (name.startsWith("mcp__")) {
-        // Show all args as key: "value" pairs
-        const argParts = Object.entries(args)
-          .filter(([, v]) => v !== undefined && v !== null && v !== "")
-          .map(([k, v]) => {
-            const s = String(v);
-            const truncated = s.length > 40 ? s.slice(0, 37) + "…" : s;
-            return `${k}: "${truncated}"`;
-          });
-        const detail = argParts.join(", ");
-        const truncDetail = detail.length > 80 ? detail.slice(0, 77) + "…" : detail;
-        return { label: displayName, detail: truncDetail };
+        // Pick the most meaningful arg as the detail (skip long blobs)
+        const detail = getMCPDetailArg(args);
+        return { label: displayName, detail };
       }
       return { label: displayName, detail: "" };
     }
@@ -287,11 +282,15 @@ function getToolHeaderParts(
 
 function toolDisplayName(name: string): string {
   if (name.startsWith("mcp__")) {
-    // mcp__grep__searchGitHub → "grep - searchGitHub (MCP)"
+    // mcp__grep__searchGitHub → "searchGitHub"
+    // mcp__zai_vision__analyze_image → "analyze_image"
     const parts = name.split("__");
-    const server = parts[1] ?? "mcp";
-    const toolFn = parts[2] ?? "";
-    return `${server} - ${toolFn} (MCP)`;
+    const toolFn = parts[2] ?? parts[1] ?? "mcp";
+    // Convert snake_case to Title Case: analyze_image → Analyze Image
+    return toolFn
+      .split("_")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
   }
   switch (name) {
     case "bash":
@@ -319,6 +318,36 @@ function toolDisplayName(name: string): string {
     default:
       return name.charAt(0).toUpperCase() + name.slice(1);
   }
+}
+
+// ── MCP detail arg extraction ─────────────────────────────
+
+/** Pick the single most meaningful arg for the MCP tool header. */
+function getMCPDetailArg(args: Record<string, unknown>): string {
+  const entries = Object.entries(args).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (entries.length === 0) return "";
+
+  // Prefer short, descriptive keys over long blobs
+  const preferred = ["query", "prompt", "url", "path", "pattern", "name", "command", "repo"];
+  let best: [string, unknown] | undefined;
+  for (const key of preferred) {
+    const found = entries.find(([k]) => k.toLowerCase() === key);
+    if (found) {
+      best = found;
+      break;
+    }
+  }
+  // Fall back to shortest non-path string arg
+  if (!best) {
+    best = entries
+      .filter(([, v]) => typeof v === "string")
+      .sort((a, b) => String(a[1]).length - String(b[1]).length)[0];
+  }
+  if (!best) best = entries[0];
+
+  const val = String(best[1]);
+  const truncated = val.length > 50 ? val.slice(0, 47) + "…" : val;
+  return truncated;
 }
 
 // ── Inline summary for compact tools ───────────────────────
@@ -383,6 +412,7 @@ interface NumberedDiffLine {
   type: "add" | "remove" | "context";
   lineNo: number;
   content: string;
+  wordSegments?: WordSegment[];
 }
 
 function parseDiffWithLineNumbers(result: string): NumberedDiffLine[] {
@@ -433,6 +463,18 @@ function buildDiffBody(
   const endIdx = Math.min(numbered.length, lastChangeIdx + 3);
   const focused = numbered.slice(startIdx, endIdx);
 
+  // Compute word-level diffs for adjacent remove/add pairs
+  for (let i = 0; i < focused.length - 1; i++) {
+    if (focused[i].type === "remove" && focused[i + 1].type === "add") {
+      const segments = computeWordDiff(focused[i].content, focused[i + 1].content);
+      focused[i] = { ...focused[i], wordSegments: segments.filter((s) => s.type !== "added") };
+      focused[i + 1] = {
+        ...focused[i + 1],
+        wordSegments: segments.filter((s) => s.type !== "removed"),
+      };
+    }
+  }
+
   // Highlight context lines using file extension
   const filePath = String(args?.file_path ?? "");
   const lang = langFromPath(filePath);
@@ -448,12 +490,21 @@ function buildDiffBody(
     <DiffLine key={i} line={line} padWidth={padWidth} />
   ));
 
+  // Wrap diff lines in a dashed border frame (top/bottom only)
+  const diffFrame = (
+    <Box key="diff-frame" flexDirection="column">
+      <Text color="#4b5563">{DASHED_H.repeat(40)}</Text>
+      {rendered}
+      <Text color="#4b5563">{DASHED_H.repeat(40)}</Text>
+    </Box>
+  );
+
   return {
     lines: [
       <Text key="summary" color="#9ca3af">
         {summaryText}
       </Text>,
-      ...rendered,
+      diffFrame,
     ],
     totalLines: focused.length + 1,
   };
@@ -594,20 +645,44 @@ const DiffLine = memo(function DiffLine({
   const lineNo = String(line.lineNo).padStart(padWidth, " ");
 
   if (line.type === "add") {
+    const bgColor = "#16a34a";
+    const wordHighlight = "#bbf7d0"; // brighter green for changed words
     return (
-      <Text backgroundColor="#16a34a" color="#ffffff">
+      <Text backgroundColor={bgColor} color="#ffffff">
         {lineNo}
         {"  "}
-        {line.content}
+        {line.wordSegments
+          ? line.wordSegments.map((seg, i) =>
+              seg.type === "added" ? (
+                <Text key={i} color={wordHighlight} bold>
+                  {seg.text}
+                </Text>
+              ) : (
+                <Text key={i}>{seg.text}</Text>
+              ),
+            )
+          : line.content}
       </Text>
     );
   }
   if (line.type === "remove") {
+    const bgColor = "#dc2626";
+    const wordHighlight = "#fecaca"; // brighter red for changed words
     return (
-      <Text backgroundColor="#dc2626" color="#ffffff">
+      <Text backgroundColor={bgColor} color="#ffffff">
         {lineNo}
         {"  "}
-        {line.content}
+        {line.wordSegments
+          ? line.wordSegments.map((seg, i) =>
+              seg.type === "removed" ? (
+                <Text key={i} color={wordHighlight} bold>
+                  {seg.text}
+                </Text>
+              ) : (
+                <Text key={i}>{seg.text}</Text>
+              ),
+            )
+          : line.content}
       </Text>
     );
   }

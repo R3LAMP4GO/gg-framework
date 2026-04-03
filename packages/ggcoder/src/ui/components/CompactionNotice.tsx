@@ -2,7 +2,7 @@ import React from "react";
 import { Text, Box } from "ink";
 import { useTheme } from "../theme/theme.js";
 import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
-import { useAnimationTick, deriveFrame } from "./AnimationContext.js";
+import { useAnimationTick, useAnimationActive, deriveFrame } from "./AnimationContext.js";
 
 const ACCENT_COLOR = "#fbbf24"; // warning/amber
 
@@ -18,6 +18,7 @@ function formatTokenCount(n: number): string {
 
 export function CompactionSpinner() {
   const theme = useTheme();
+  useAnimationActive();
   const tick = useAnimationTick();
   const frame = deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length);
 

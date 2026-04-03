@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { resolvePath, rejectSymlink } from "./path-utils.js";
 import { truncateHead } from "./truncate.js";
+import { writeOverflow } from "./overflow.js";
 import { localOperations, type ToolOperations } from "./operations.js";
 
 export const BINARY_EXTENSIONS = new Set([
@@ -80,7 +81,8 @@ export function createReadTool(
     name: "read",
     description:
       "Read a file's contents. Returns numbered lines (cat -n style). " +
-      "Output is capped at ~25,000 tokens. If truncated, use offset/limit to read remaining sections. " +
+      "Output is truncated to 2000 lines or 50KB (whichever is hit first). " +
+      "If truncated, use offset/limit to read remaining sections. " +
       "Binary files return a notice instead of content.",
     parameters: ReadParams,
     async execute({ file_path, offset, limit }) {
@@ -117,9 +119,11 @@ export function createReadTool(
 
       if (result.truncated) {
         const nextOffset = (offset ?? 1) + result.keptLines;
+        const overflowPath = await writeOverflow(content, "read").catch(() => null);
+        const overflowNotice = overflowPath ? ` Full output saved to ${overflowPath}.` : "";
         return (
           `${numbered}\n` +
-          `[Truncated: showing lines ${offset ?? 1}-${(offset ?? 1) + result.keptLines - 1} of ${result.totalLines}. ` +
+          `[Truncated: showing lines ${offset ?? 1}-${(offset ?? 1) + result.keptLines - 1} of ${result.totalLines}.${overflowNotice} ` +
           `Use offset=${nextOffset} to read more.]`
         );
       }

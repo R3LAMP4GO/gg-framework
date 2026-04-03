@@ -94,15 +94,20 @@ async function runStream(options: StreamOptions, result: StreamResult): Promise<
     ...(options.toolChoice && options.tools?.length
       ? { tool_choice: toAnthropicToolChoice(options.toolChoice) }
       : {}),
-    ...(options.compaction
-      ? { context_management: { edits: [{ type: "compact_20260112" }] } }
-      : {}),
+    ...(() => {
+      const contextEdits = [
+        ...(options.compaction ? [{ type: "compact_20260112" }] : []),
+        ...(options.clearToolUses ? [{ type: "clear_tool_uses_20250919" }] : []),
+      ];
+      return contextEdits.length ? { context_management: { edits: contextEdits } } : {};
+    })(),
     stream: true,
   } as Anthropic.MessageCreateParams;
 
   const betaHeaders = [
     ...(isOAuth ? ["claude-code-20250219", "oauth-2025-04-20"] : []),
     ...(options.compaction ? ["compact-2026-01-12"] : []),
+    ...(options.clearToolUses ? ["context-management-2025-06-27"] : []),
   ];
 
   const stream = client.messages.stream(params, {

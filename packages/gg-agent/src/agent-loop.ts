@@ -18,7 +18,7 @@ import type {
   StructuredToolResult,
 } from "./types.js";
 
-const DEFAULT_MAX_TURNS = 100;
+const DEFAULT_MAX_TURNS = 200;
 
 /**
  * Detect abort errors — user-initiated cancellation or AbortSignal.
@@ -59,7 +59,9 @@ export function isBillingError(err: unknown): boolean {
     msg.includes("no resource package") ||
     msg.includes("quota exceeded") ||
     msg.includes("billing") ||
-    msg.includes("recharge")
+    msg.includes("recharge") ||
+    msg.includes("subscription plan") ||
+    msg.includes("does not yet include access")
   );
 }
 
@@ -91,19 +93,37 @@ export async function* agentLoop(
 
   const totalUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   let turn = 0;
+  let firstTurn = true;
   let consecutivePauses = 0;
   let overflowRetries = 0;
   let overloadRetries = 0;
   let emptyResponseRetries = 0;
+  let stallRetries = 0;
   const MAX_OVERFLOW_RETRIES = 3;
-  const MAX_OVERLOAD_RETRIES = 3;
-  const MAX_EMPTY_RESPONSE_RETRIES = 3;
-  const OVERLOAD_RETRY_DELAY_MS = 3_000;
+  const MAX_OVERLOAD_RETRIES = 10;
+  const MAX_EMPTY_RESPONSE_RETRIES = 2;
+  const MAX_STALL_RETRIES = 2;
+  const OVERLOAD_BASE_DELAY_MS = 2_000;
+  const OVERLOAD_MAX_DELAY_MS = 30_000;
+  const STREAM_IDLE_TIMEOUT_MS = 45_000; // 45s without any stream event = stall
+  const STREAM_HARD_TIMEOUT_MS = 120_000; // 2min absolute cap per LLM call
 
   try {
     while (turn < maxTurns) {
       options.signal?.throwIfAborted();
       turn++;
+
+      // ── Initial steering poll: catch messages queued before the first LLM call ──
+      if (firstTurn && options.getSteeringMessages) {
+        const steering = await options.getSteeringMessages();
+        if (steering && steering.length > 0) {
+          for (const msg of steering) {
+            yield { type: "steering_message" as const, content: msg.content };
+            messages.push(msg);
+          }
+        }
+      }
+      firstTurn = false;
 
       // ── Mid-loop context transform (compaction / truncation) ──
       if (options.transformContext) {
@@ -114,8 +134,40 @@ export async function* agentLoop(
         }
       }
 
+      // ── Repair tool pairing: ensure every tool_use has an adjacent tool_result ──
+      repairToolPairingAdjacent(messages);
+
       // ── Call LLM with overflow recovery ──
       let response;
+      // Per-attempt abort controller: allows idle timeout to abort the stream
+      // without affecting the caller's signal. The caller's abort is forwarded.
+      const streamController = new AbortController();
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let hardTimer: ReturnType<typeof setTimeout> | null = null;
+      let idleTimedOut = false;
+
+      // Forward caller abort to the per-attempt controller
+      const forwardAbort = () => streamController.abort();
+      options.signal?.addEventListener("abort", forwardAbort, { once: true });
+
+      // Idle timeout: abort the stream if no events arrive within the window.
+      // This catches mid-stream server stalls where the connection stays open
+      // but the server stops sending data (overload, network issues, etc.).
+      const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          idleTimedOut = true;
+          streamController.abort();
+        }, STREAM_IDLE_TIMEOUT_MS);
+      };
+
+      // Hard timeout: absolute cap per LLM call. Safety net for streams that
+      // keep sending sparse events (e.g. keep-alive pings) but never complete.
+      hardTimer = setTimeout(() => {
+        idleTimedOut = true;
+        streamController.abort();
+      }, STREAM_HARD_TIMEOUT_MS);
+
       try {
         const result = stream({
           provider: options.provider,
@@ -129,17 +181,20 @@ export async function* agentLoop(
           thinking: options.thinking,
           apiKey: options.apiKey,
           baseUrl: options.baseUrl,
-          signal: options.signal,
+          signal: streamController.signal,
           accountId: options.accountId,
           cacheRetention: options.cacheRetention,
           compaction: options.compaction,
+          clearToolUses: options.clearToolUses,
         });
 
         // Suppress unhandled rejection if the iterator path throws first
         result.response.catch(() => {});
 
-        // Forward streaming deltas
+        // Forward streaming deltas — reset idle timer on each event
+        resetIdleTimer();
         for await (const event of result) {
+          resetIdleTimer();
           if (event.type === "text_delta") {
             yield { type: "text_delta" as const, text: event.text };
           } else if (event.type === "thinking_delta") {
@@ -170,6 +225,13 @@ export async function* agentLoop(
           options.transformContext
         ) {
           overflowRetries++;
+          yield {
+            type: "retry" as const,
+            reason: "context_overflow" as const,
+            attempt: overflowRetries,
+            maxAttempts: MAX_OVERFLOW_RETRIES,
+            delayMs: 0,
+          };
           const transformed = await options.transformContext(messages, { force: true });
           if (transformed !== messages) {
             messages.length = 0;
@@ -178,10 +240,36 @@ export async function* agentLoop(
           turn--; // Don't count the failed turn
           continue;
         }
-        // Overloaded / rate-limited: wait 3s and retry (up to 3 times)
+        // Overloaded / rate-limited: exponential backoff, retry up to 10 times
         if (overloadRetries < MAX_OVERLOAD_RETRIES && isOverloaded(err)) {
           overloadRetries++;
-          await new Promise((r) => setTimeout(r, OVERLOAD_RETRY_DELAY_MS));
+          const delayMs = Math.min(
+            OVERLOAD_BASE_DELAY_MS * 2 ** (overloadRetries - 1),
+            OVERLOAD_MAX_DELAY_MS,
+          );
+          yield {
+            type: "retry" as const,
+            reason: "overloaded" as const,
+            attempt: overloadRetries,
+            maxAttempts: MAX_OVERLOAD_RETRIES,
+            delayMs,
+          };
+          await new Promise((r) => setTimeout(r, delayMs));
+          turn--; // Don't count the failed turn
+          continue;
+        }
+        // Stream stall: the API connection hung mid-stream without closing.
+        // Retry with a short delay — the server may have recovered.
+        if (idleTimedOut && !options.signal?.aborted && stallRetries < MAX_STALL_RETRIES) {
+          stallRetries++;
+          yield {
+            type: "retry" as const,
+            reason: "stream_stall" as const,
+            attempt: stallRetries,
+            maxAttempts: MAX_STALL_RETRIES,
+            delayMs: 1_000,
+          };
+          await new Promise((r) => setTimeout(r, 1_000));
           turn--; // Don't count the failed turn
           continue;
         }
@@ -191,11 +279,16 @@ export async function* agentLoop(
           break;
         }
         throw err;
+      } finally {
+        if (idleTimer) clearTimeout(idleTimer);
+        if (hardTimer) clearTimeout(hardTimer);
+        options.signal?.removeEventListener("abort", forwardAbort);
       }
 
       // Reset retry counters after successful call
       overflowRetries = 0;
       overloadRetries = 0;
+      stallRetries = 0;
 
       // Detect empty/degenerate responses — the API occasionally returns 0 tokens
       // with no content (e.g. stream interruption, transient server issue).
@@ -207,6 +300,13 @@ export async function* agentLoop(
       ) {
         if (emptyResponseRetries < MAX_EMPTY_RESPONSE_RETRIES) {
           emptyResponseRetries++;
+          yield {
+            type: "retry" as const,
+            reason: "empty_response" as const,
+            attempt: emptyResponseRetries,
+            maxAttempts: MAX_EMPTY_RESPONSE_RETRIES,
+            delayMs: 0,
+          };
           turn--; // Don't count the failed turn
           continue;
         }
@@ -263,6 +363,17 @@ export async function* agentLoop(
               messages.push(msg);
             }
             continue; // Next iteration will call LLM with injected messages
+          }
+        }
+        // Follow-up: lower priority than steering — only when agent would otherwise stop.
+        if (options.getFollowUpMessages) {
+          const followUp = await options.getFollowUpMessages();
+          if (followUp && followUp.length > 0) {
+            for (const msg of followUp) {
+              yield { type: "follow_up_message" as const, content: msg.content };
+              messages.push(msg);
+            }
+            continue;
           }
         }
         yield {
@@ -415,6 +526,24 @@ export async function* agentLoop(
             });
           }
         }
+        // Guard: cap oversized tool results before they enter conversation history.
+        // Uses head+tail strategy to preserve error messages / closing structure at the end.
+        if (options.maxToolResultChars) {
+          const HARD_MAX = 400_000; // absolute ceiling regardless of context window
+          const max = Math.min(options.maxToolResultChars, HARD_MAX);
+          for (const tr of toolResults) {
+            if (tr.content.length > max) {
+              // Keep 70% head + 30% tail to preserve errors/diagnostics at the end
+              const headChars = Math.floor(max * 0.7);
+              const tailChars = max - headChars;
+              const head = tr.content.slice(0, headChars);
+              const tail = tr.content.slice(-tailChars);
+              const omitted = tr.content.length - headChars - tailChars;
+              tr.content = head + `\n\n[... ${omitted} characters omitted ...]\n\n` + tail;
+            }
+          }
+        }
+
         messages.push({ role: "tool", content: toolResults });
       }
 
@@ -515,5 +644,54 @@ function sanitizeOrphanedServerTools(messages: Message[]): void {
       (msg as { content: ContentPart[] }).content = filtered;
     }
     break;
+  }
+}
+
+/**
+ * Ensure every assistant message with tool_call blocks is immediately followed
+ * by a tool message with matching tool_result entries. This prevents Anthropic
+ * API 400 errors ("tool_use ids found without tool_result blocks immediately
+ * after") that can occur after compaction, session restore, or abort recovery.
+ *
+ * Repairs in-place by inserting synthetic tool_result messages where needed.
+ */
+function repairToolPairingAdjacent(messages: Message[]): void {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "assistant") continue;
+    if (typeof msg.content === "string" || !Array.isArray(msg.content)) continue;
+
+    const toolCallIds = (msg.content as ContentPart[])
+      .filter((p) => p.type === "tool_call")
+      .map((p) => (p as ContentPart & { type: "tool_call"; id: string }).id);
+    if (toolCallIds.length === 0) continue;
+
+    const next = messages[i + 1];
+    if (next?.role === "tool" && Array.isArray(next.content)) {
+      // Tool message exists — check for missing results
+      const existingIds = new Set((next.content as ToolResult[]).map((r) => r.toolCallId));
+      const missing = toolCallIds.filter((id) => !existingIds.has(id));
+      if (missing.length > 0) {
+        for (const id of missing) {
+          (next.content as ToolResult[]).push({
+            type: "tool_result",
+            toolCallId: id,
+            content: "Tool execution was interrupted.",
+            isError: true,
+          });
+        }
+      }
+    } else {
+      // No tool message follows — insert a synthetic one
+      messages.splice(i + 1, 0, {
+        role: "tool" as const,
+        content: toolCallIds.map((id) => ({
+          type: "tool_result" as const,
+          toolCallId: id,
+          content: "Tool execution was interrupted.",
+          isError: true,
+        })),
+      });
+    }
   }
 }

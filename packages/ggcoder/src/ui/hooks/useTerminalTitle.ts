@@ -1,40 +1,32 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useStdout } from "ink";
-import type { ActivityPhase } from "./useAgentLoop.js";
 
-import { SPINNER_FRAMES, SPINNER_INTERVAL } from "../spinner-frames.js";
-import { useAnimationTick, deriveFrame } from "../components/AnimationContext.js";
-
-function getTitleText(phase: ActivityPhase, isRunning: boolean): string {
-  if (!isRunning) return "GG Coder";
-  switch (phase) {
-    case "thinking":
-      return "Thinking...";
-    case "generating":
-      return "Generating...";
-    case "tools":
-      return "Running tools...";
-    case "waiting":
-      return "Thinking...";
-    default:
-      return "GG Coder";
-  }
+export interface TerminalTitleOptions {
+  isRunning: boolean;
+  /** LLM-generated session title (shown as the terminal window title). */
+  sessionTitle?: string;
 }
 
-export function useTerminalTitle(phase: ActivityPhase, isRunning: boolean): void {
+export function useTerminalTitle({ isRunning, sessionTitle }: TerminalTitleOptions): void {
   const { stdout } = useStdout();
 
-  // Derive spinner frame from global animation tick — no independent timer
-  const tick = useAnimationTick();
-  const spinnerFrame = isRunning ? deriveFrame(tick, SPINNER_INTERVAL, SPINNER_FRAMES.length) : 0;
+  // Track previous title to avoid redundant writes
+  const prevTitleRef = useRef("");
 
   // Write terminal title
   useEffect(() => {
     if (!stdout) return;
-    const text = getTitleText(phase, isRunning);
-    const title = isRunning ? `${SPINNER_FRAMES[spinnerFrame]} ${text}` : text;
-    stdout.write(`\x1b]0;${title}\x1b\\`);
-  }, [stdout, phase, isRunning, spinnerFrame]);
+    let title: string;
+    if (sessionTitle) {
+      title = isRunning ? `● ${sessionTitle}` : sessionTitle;
+    } else {
+      title = "GG Coder";
+    }
+    if (title !== prevTitleRef.current) {
+      prevTitleRef.current = title;
+      stdout.write(`\x1b]0;${title}\x1b\\`);
+    }
+  }, [stdout, isRunning, sessionTitle]);
 
   // Reset title on unmount
   useEffect(() => {
